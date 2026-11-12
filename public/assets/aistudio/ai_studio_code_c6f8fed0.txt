@@ -1,0 +1,88 @@
+คุณคือผู้เชี่ยวชาญด้านวิศวกรรมระบบบำบัดน้ำบริสุทธิ์สูง (Water Treatment Process Engineer) 
+และ Full-Stack Developer กรุณาพัฒนาเว็บแอปพลิเคชันสำหรับการคำนวณ วิเคราะห์ และติดตาม
+ประสิทธิภาพของระบบบำบัดน้ำระบบ Reverse Osmosis (RO) และ Mixed Bed Ion Exchange (MB) 
+สำหรับโรงไฟฟ้า (North Bangkok Power Plant Block 1) โดยมีรายละเอียดและข้อกำหนดดังนี้:
+
+---
+
+### 1. โมดูลการคำนวณทางวิศวกรรม (Core Calculation Modules)
+
+#### โมดูลที่ 1: การประเมินประสิทธิภาพเยื่อกรอง RO (%Salt Rejection)
+- ข้อมูลนำเข้า:
+  - Feed Conductivity (µS/cm)
+  - Permeate Conductivity (µS/cm)
+- สูตรคำนวณ:
+  %Salt Rejection = ((Feed - Permeate) / Feed) × 100
+- เกณฑ์ประเมินสถานะ:
+  - ปกติ (Normal): ≥ 98.0%
+  - เฝ้าระวัง (Warning): 95.0% - 97.9%
+  - เสื่อมสภาพ/ต้องตรวจสอบ (Critical): < 95.0%
+
+#### โมดูลที่ 2: การประเมินประสิทธิภาพการกำจัดซิลิกา (%Silica Rejection)
+- ข้อมูลนำเข้า:
+  - Feed Reactive Silica (ppb as SiO₂)
+  - Permeate Reactive Silica (ppb as SiO₂)
+- สูตรคำนวณ:
+  %Silica Rejection = ((Feed - Permeate) / Feed) × 100
+- เกณฑ์ประเมินสถานะ:
+  - ปกติ (Normal): ≥ 98.0%
+  - เฝ้าระวัง (Warning): 90.0% - 97.9%
+  - ซิลิกาหลุดผ่าน (Breakthrough): < 90.0%
+
+#### โมดูลที่ 3: การคำนวณ Ion Load 6 ขั้นตอน และคาดการณ์จุดตัดรอบผลิต (Mixed Bed)
+- ข้อมูลนำเข้าต่อรอบ:
+  - Cycle (m³): ปริมาตรน้ำผลิตสะสมของรอบปัจจุบัน
+  - Cond. MB Inlet / RO Outlet (µS/cm): ค่านำไฟฟ้าทางเข้า Mixed Bed
+  - Cond. MB Outlet (µS/cm): ค่านำไฟฟ้าทางออก Mixed Bed
+- ค่าคงที่และพารามิเตอร์:
+  - Limiting Molar Conductivity (NaCl eq ที่ 25°C): Λ₀ = 126.45 S·cm²/mol
+  - Rated Resin Ion Capacity: 74.0 mol (ปรับเปลี่ยนได้ตามสเปกสารเรซิน)
+- ลำดับขั้นตอนคำนวณ (Strict 6-Step Workflow):
+  - ขั้นที่ 1 (ระยะห่าง Cycle): ΔV = Cycle ปัจจุบัน − Cycle ก่อนหน้า (m³)
+  - ขั้นที่ 2 (Inlet Concentration): C_in (mol/m³) = (Cond. Inlet / 126.45)
+  - ขั้นที่ 3 (Outlet Concentration): C_out (mol/m³) = (Cond. Outlet / 126.45)
+  - ขั้นที่ 4 (Ion ที่ถูกดักจับรอบนี้): Δn (mol) = (C_in − C_out) × ΔV
+  - ขั้นที่ 5 (Ion Load สะสมรวม): L_n (mol) = L_(n-1) + Δn (สะสมต่อเนื่องตามลำดับรอบ)
+  - ขั้นที่ 6 (สัดส่วนภาระเรซิน): %Load = (L_n / Capacity) × 100
+- การคาดการณ์จุดตัดรอบ (Cut-off Volume Prediction):
+  - คำนวณอัตราเฉลี่ยการดักจับไอออนต่อลูกบาศก์เมตร (Rate = L_n / Cycle_end)
+  - คาดการณ์ปริมาตรผลิตสะสม ณ เกณฑ์ตัดรอบ 98%: Cut-off Volume (m³) = (Capacity × 0.98) / Rate
+  - คำนวณปริมาตรน้ำที่ผลิตต่อได้จนถึงจุดตัดรอบ: Remaining Volume = Max(0, Cut-off Volume − Current Cycle)
+  - เกณฑ์ความปลอดภัยน้ำผลิต: Cond Outlet < 0.100 µS/cm และ %Load < 98.0%
+
+---
+
+### 2. สถาปัตยกรรมระบบและการจัดเก็บข้อมูล (System & Data Architecture)
+
+1. Dual-Storage Strategy:
+   - Cloud Firestore: ซิงค์ข้อมูลแบบ Real-time (onSnapshot) สำหรับผู้ใช้ที่เข้าสู่ระบบผ่าน Google Authentication
+   - LocalStorage Fallback: จัดเก็บข้อมูลอัตโนมัติลงในเบราว์เซอร์สำหรับโหมดใช้งานชั่วคราว (Guest Mode)
+2. โครงสร้างคอลเลกชัน (Database Collections):
+   - /users/{userId}/salt_records: บันทึกประวัติ %Salt Rejection
+   - /users/{userId}/silica_records: บันทึกประวัติ %Silica Rejection
+   - /users/{userId}/cycle_predictions: บันทึกประวัติรอบการผลิต Mixed Bed
+3. ระบบรักษาความปลอดภัย (Firestore Security Rules):
+   - บังคับใช้ Zero-Trust และ ABAC (Attribute-Based Access Control)
+   - ป้องกัน ID Poisoning ด้วยฟังก์ชัน isValidId() และตรวจสอบสิทธิ์เจ้าของข้อมูล (Owner Only)
+   - บังคับ Timestamp ด้วย request.time
+
+---
+
+### 3. ประสบการณ์ผู้ใช้และการออกแบบ UI (UX/UI Specifications)
+
+1. การกรอกข้อมูลแบบแมนนวล (Manual Entry Focused Form):
+   - หน้ากรอกรอบ Cycle มี 3 ช่องหลัก: Cycle (m³), Cond. MB Inlet, Cond. MB Outlet
+   - ช่องกรอกเริ่มต้นเป็นค่าว่าง พร้อม Placeholder ใบ้ขอบเขตค่า (ไม่ดึงค่าสมมุติมาค้างในช่อง)
+   - ล้างค่าในช่องกรอกทันทีที่กดบันทึกสำเร็จ (Auto-clear on save)
+   - แสดงผลคำนวณสด 3 การ์ด (Δn, L_n, %Load) แบบ Real-time ขณะผู้ใช้พิมพ์
+2. การติดตามพื้นที่จัดเก็บในหน้าประวัติ (Database Storage Capacity & Quota in History):
+   - คำนวณขนาดพื้นที่ใช้งานจริงในหน่วย Byte/KB/MB ผ่าน Blob UTF-8 serialization
+   - แสดงแถบ Progress Bar บ่งบอกพื้นที่จัดเก็บไปแล้วเทียบกับพื้นที่คงเหลือ
+   - แจกแจงโควตาสูงสุด: 1.00 GB สำหรับ Cloud Firestore (Spark Free Tier) และ 5.00 MB สำหรับ LocalStorage
+   - สรุปจำนวนรายการจัดเก็บแยกตามประเภท (%Salt, %Silica, Cycle)
+3. ระบบนำทางและการแสดงผล (Responsive Navigation):
+   - รองรับ 2 ภาษา (ไทย / อังกฤษ) แบบสลับได้ทันทีทุกหน้า
+   - รองรับ Light Mode / Dark Mode ตามธีมสีของระบบและผู้ใช้
+   - Desktop: แถบเมนูด้านซ้ายพับเก็บได้พร้อมคีย์ลัด Ctrl+B
+   - Mobile: แถบเมนูด้านล่าง (Bottom Navigation Dock) ใช้งานได้ด้วยนิ้วโป้งเดียว
+   - การส่งออกข้อมูล: รองรับการดาวน์โหลด CSV รายตาราง และ Export Backup ทั้งระบบเป็นไฟล์ JSON

@@ -1,0 +1,212 @@
+@import "tailwindcss";
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *, .dark, .dark *));
+
+:root {
+  --ink: #0f172a;
+  --ink-soft: #475569;
+  --line: #e2e8f0;
+  --bg: #f8fafc;
+  --panel: #ffffff;
+  --panel-elevated: #ffffff;
+
+  /* Sidebar Light Mode - Clean, crisp, high-contrast light theme */
+  --sidebar: #ffffff;
+  --sidebar-border: #e2e8f0;
+  --sidebar-title: #0f172a;
+  --sidebar-ink: #334155;
+  --sidebar-muted: #64748b;
+  --sidebar-hover: #f1f5f9;
+  --sidebar-active: #eff6ff;
+  --sidebar-active-text: #0284c7;
+  --sidebar-icon-bg: #f1f5f9;
+  --sidebar-icon: #475569;
+  --sidebar-bottom-bg: #f8fafc;
+  --sidebar-card-bg: #ffffff;
+  --sidebar-badge-bg: #e2e8f0;
+  --sidebar-badge-text: #334155;
+
+  --accent: #0284c7;
+  --accent-deep: #0369a1;
+  --safe: #059669;
+  --warn: #e11d48;
+  --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-expo: cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+:root[data-theme="dark"],
+.dark {
+  --ink: #f8fafc;
+  --ink-soft: #94a3b8;
+  --line: #1e293b;
+  --bg: #070b12;
+  --panel: #0f1623;
+  --panel-elevated: #131c2e;
+
+  /* Sidebar Dark Mode */
+  --sidebar: #090d16;
+  --sidebar-border: #1e293b;
+  --sidebar-title: #f8fafc;
+  --sidebar-ink: #cbd5e1;
+  --sidebar-muted: #64748b;
+  --sidebar-hover: #131c2e;
+  --sidebar-active: #0c243c;
+  --sidebar-active-text: #38bdf8;
+  --sidebar-icon-bg: #111827;
+  --sidebar-icon: #94a3b8;
+  --sidebar-bottom-bg: #070b12;
+  --sidebar-card-bg: #0f1623;
+  --sidebar-badge-bg: #1e293b;
+  --sidebar-badge-text: #e2e8f0;
+
+  --accent: #38bdf8;
+  --accent-deep: #0284c7;
+  --safe: #34d399;
+  --warn: #fb7185;
+}
+
+html {
+  font-size: 16px;
+  scroll-behavior: smooth;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg);
+  color: var(--ink);
+  font-family: "Prompt", "Noto Sans Thai", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  line-height: 1.6;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  min-height: 100vh;
+  overflow-x: hidden;
+  transition: background-color 0.25s var(--ease-spring), color 0.25s var(--ease-spring);
+}
+
+code,
+kbd,
+samp,
+pre,
+.font-mono,
+.tabular-nums {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Custom sleek scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 9999px;
+  transition: background 0.2s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-soft);
+}
+
+/* Prevent native number spinners from overlapping with text labels */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+/* Smooth motion keyframes */
+@keyframes viewEnter {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeInScale {
+  0% {
+    opacity: 0;
+    transform: scale(0.97) translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes modalEnter {
+  0% {
+    opacity: 0;
+    transform: scale(0.95) translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.view-transition {
+  animation: viewEnter 0.24s var(--ease-spring);
+}
+
+.card-reveal {
+  animation: fadeInScale 0.24s var(--ease-spring);
+}
+
+.modal-animated {
+  animation: modalEnter 0.22s var(--ease-spring) forwards;
+}
+
+/* Smooth interactive transitions within 150-200ms latency budget */
+button,
+input,
+select,
+textarea {
+  transition-property: color, background-color, border-color, box-shadow, transform, opacity;
+  transition-timing-function: var(--ease-spring);
+  transition-duration: 180ms;
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.985);
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Hide scrollbar for clean horizontal tab strips on mobile */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

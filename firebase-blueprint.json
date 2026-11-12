@@ -1,0 +1,272 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth User UID",
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "User email address",
+          "maxLength": 256
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the user",
+          "maxLength": 256
+        },
+        "photoURL": {
+          "type": "string",
+          "description": "Avatar photo URL",
+          "maxLength": 2048
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp in ISO string",
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last update timestamp in ISO string",
+          "maxLength": 64
+        }
+      },
+      "required": ["userId", "email", "createdAt"]
+    },
+    "SaltRecord": {
+      "title": "SaltRecord",
+      "description": "Recorded salt rejection calculation entry",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner user UID",
+          "maxLength": 128
+        },
+        "feed": {
+          "type": "number",
+          "description": "Feed conductivity in uS/cm"
+        },
+        "permeate": {
+          "type": "number",
+          "description": "Permeate conductivity in uS/cm"
+        },
+        "rejection": {
+          "type": "number",
+          "description": "Calculated rejection percentage"
+        },
+        "cycle": {
+          "type": "string",
+          "description": "Optional cycle or date label",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp in ISO string",
+          "maxLength": 64
+        }
+      },
+      "required": ["userId", "feed", "permeate", "rejection", "createdAt"]
+    },
+    "SilicaRecord": {
+      "title": "SilicaRecord",
+      "description": "Recorded silica rejection calculation entry",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner user UID",
+          "maxLength": 128
+        },
+        "feed": {
+          "type": "number",
+          "description": "Feed silica in ppb"
+        },
+        "permeate": {
+          "type": "number",
+          "description": "Permeate silica in ppb"
+        },
+        "rejection": {
+          "type": "number",
+          "description": "Calculated rejection percentage"
+        },
+        "cycle": {
+          "type": "string",
+          "description": "Optional cycle or date label",
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp in ISO string",
+          "maxLength": 64
+        }
+      },
+      "required": ["userId", "feed", "permeate", "rejection", "createdAt"]
+    },
+    "CyclePredictionRecord": {
+      "title": "CyclePredictionRecord",
+      "description": "Recorded cycle prediction batch/set and ion load kinetics entry",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner user UID",
+          "maxLength": 128
+        },
+        "batchName": {
+          "type": "string",
+          "description": "Name of the cycle batch/set",
+          "maxLength": 256
+        },
+        "train": {
+          "type": "string",
+          "description": "Plant train identifier (e.g. A or B)",
+          "maxLength": 32
+        },
+        "resinCapacity": {
+          "type": "number",
+          "description": "Operating resin capacity in mol"
+        },
+        "condCapacity": {
+          "type": "number",
+          "description": "Operating conductivity resin capacity in mol"
+        },
+        "silicaCapacity": {
+          "type": "number",
+          "description": "Operating silica resin capacity in mol"
+        },
+        "rowCount": {
+          "type": "number",
+          "description": "Number of cycle steps/rows in this batch"
+        },
+        "rows": {
+          "type": "array",
+          "description": "Ordered list of cycle step rows belonging to this batch"
+        },
+        "conductivity": {
+          "type": "number",
+          "description": "MB inlet conductivity in uS/cm"
+        },
+        "condOut": {
+          "type": "number",
+          "description": "MB outlet conductivity in uS/cm"
+        },
+        "cycleStart": {
+          "type": "number",
+          "description": "Cycle start volume in m3"
+        },
+        "cycleEnd": {
+          "type": "number",
+          "description": "Cycle end volume in m3"
+        },
+        "distance": {
+          "type": "number",
+          "description": "Throughput distance delta V in m3"
+        },
+        "ionsRemoved": {
+          "type": "number",
+          "description": "Ions captured in cycle in mol"
+        },
+        "cumulativeIonLoad": {
+          "type": "number",
+          "description": "Cumulative ion load in mol"
+        },
+        "percentLoad": {
+          "type": "number",
+          "description": "Percent load on resin"
+        },
+        "predictedCycle": {
+          "type": "number",
+          "description": "Predicted volume at 98% cut-off in m3"
+        },
+        "predictedBreakthrough": {
+          "type": "number",
+          "description": "Predicted volume at 100% breakthrough in m3"
+        },
+        "cycle": {
+          "type": "string",
+          "description": "Optional cycle or batch label",
+          "maxLength": 128
+        },
+        "silica": {
+          "type": "number",
+          "description": "MB inlet silica in ppb"
+        },
+        "silicaOut": {
+          "type": "number",
+          "description": "MB outlet silica in ppb"
+        },
+        "cumulativeSilicaLoad": {
+          "type": "number",
+          "description": "Cumulative silica ion load in mol"
+        },
+        "silicaPercentLoad": {
+          "type": "number",
+          "description": "Silica percent load on resin"
+        },
+        "totalCombinedIonLoad": {
+          "type": "number",
+          "description": "Total combined conductivity and silica ion load in mol"
+        },
+        "combinedPercentLoad": {
+          "type": "number",
+          "description": "Combined percent load on resin"
+        },
+        "b0": {
+          "type": "number",
+          "description": "Legacy Beta 0 intercept"
+        },
+        "b1": {
+          "type": "number",
+          "description": "Legacy Beta 1 conductivity coefficient"
+        },
+        "b2": {
+          "type": "number",
+          "description": "Legacy Beta 2 silica coefficient"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp in ISO string",
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Last updated timestamp in ISO string",
+          "maxLength": 64
+        }
+      },
+      "required": ["userId", "conductivity", "predictedCycle", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "User profile documents stored by user ID"
+    },
+    "/users/{userId}/salt_records/{recordId}": {
+      "schema": {
+        "$ref": "#/entities/SaltRecord"
+      },
+      "description": "Salt rejection history items owned by the user"
+    },
+    "/users/{userId}/silica_records/{recordId}": {
+      "schema": {
+        "$ref": "#/entities/SilicaRecord"
+      },
+      "description": "Silica rejection history items owned by the user"
+    },
+    "/users/{userId}/cycle_predictions/{predictionId}": {
+      "schema": {
+        "$ref": "#/entities/CyclePredictionRecord"
+      },
+      "description": "Cycle prediction history items owned by the user"
+    }
+  }
+}

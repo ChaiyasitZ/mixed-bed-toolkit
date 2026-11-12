@@ -1,0 +1,144 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net: Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Entity validation functions
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['userId', 'email', 'createdAt']) &&
+        data.keys().hasOnly(['userId', 'email', 'displayName', 'photoURL', 'createdAt', 'updatedAt']) &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == request.auth.uid &&
+        data.email is string && data.email.size() <= 256 &&
+        (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 256)) &&
+        (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 2048)) &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    function isValidSaltRecord(data, userId) {
+      return data.keys().hasAll(['userId', 'feed', 'permeate', 'rejection', 'createdAt']) &&
+        data.keys().hasOnly(['userId', 'feed', 'permeate', 'rejection', 'cycle', 'createdAt']) &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == userId && data.userId == request.auth.uid &&
+        data.feed is number && data.feed >= 0 &&
+        data.permeate is number && data.permeate >= 0 &&
+        data.rejection is number &&
+        (!('cycle' in data) || (data.cycle is string && data.cycle.size() <= 128)) &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidSilicaRecord(data, userId) {
+      return data.keys().hasAll(['userId', 'feed', 'permeate', 'rejection', 'createdAt']) &&
+        data.keys().hasOnly(['userId', 'feed', 'permeate', 'rejection', 'cycle', 'createdAt']) &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == userId && data.userId == request.auth.uid &&
+        data.feed is number && data.feed >= 0 &&
+        data.permeate is number && data.permeate >= 0 &&
+        data.rejection is number &&
+        (!('cycle' in data) || (data.cycle is string && data.cycle.size() <= 128)) &&
+        data.createdAt is string && data.createdAt.size() <= 64;
+    }
+
+    function isValidCyclePrediction(data, userId) {
+      return data.keys().hasAll(['userId', 'conductivity', 'predictedCycle', 'createdAt']) &&
+        data.keys().hasOnly(['userId', 'conductivity', 'predictedCycle', 'createdAt', 'updatedAt', 'condOut', 'cycleStart', 'cycleEnd', 'distance', 'ionsRemoved', 'cumulativeIonLoad', 'percentLoad', 'cycle', 'batchName', 'train', 'resinCapacity', 'condCapacity', 'silicaCapacity', 'rowCount', 'predictedBreakthrough', 'rows', 'silica', 'silicaOut', 'cumulativeSilicaLoad', 'silicaPercentLoad', 'totalCombinedIonLoad', 'combinedPercentLoad', 'b0', 'b1', 'b2']) &&
+        data.userId is string && data.userId.size() <= 128 && data.userId == userId && data.userId == request.auth.uid &&
+        data.conductivity is number && data.conductivity >= 0 &&
+        data.predictedCycle is number &&
+        (!('condOut' in data) || (data.condOut is number && data.condOut >= 0)) &&
+        (!('cycleStart' in data) || (data.cycleStart is number && data.cycleStart >= 0)) &&
+        (!('cycleEnd' in data) || (data.cycleEnd is number && data.cycleEnd >= 0)) &&
+        (!('distance' in data) || (data.distance is number && data.distance >= 0)) &&
+        (!('ionsRemoved' in data) || data.ionsRemoved is number) &&
+        (!('cumulativeIonLoad' in data) || data.cumulativeIonLoad is number) &&
+        (!('percentLoad' in data) || data.percentLoad is number) &&
+        (!('cycle' in data) || (data.cycle is string && data.cycle.size() <= 128)) &&
+        (!('batchName' in data) || (data.batchName is string && data.batchName.size() <= 256)) &&
+        (!('train' in data) || (data.train is string && data.train.size() <= 32)) &&
+        (!('resinCapacity' in data) || (data.resinCapacity is number && data.resinCapacity > 0)) &&
+        (!('condCapacity' in data) || (data.condCapacity is number && data.condCapacity > 0)) &&
+        (!('silicaCapacity' in data) || (data.silicaCapacity is number && data.silicaCapacity > 0)) &&
+        (!('rowCount' in data) || (data.rowCount is number && data.rowCount >= 0)) &&
+        (!('predictedBreakthrough' in data) || data.predictedBreakthrough is number) &&
+        (!('rows' in data) || (data.rows is list && data.rows.size() <= 500 && (data.rows.size() == 0 || data.rows[0] is map))) &&
+        (!('silica' in data) || data.silica is number) &&
+        (!('silicaOut' in data) || data.silicaOut is number) &&
+        (!('cumulativeSilicaLoad' in data) || data.cumulativeSilicaLoad is number) &&
+        (!('silicaPercentLoad' in data) || data.silicaPercentLoad is number) &&
+        (!('totalCombinedIonLoad' in data) || data.totalCombinedIonLoad is number) &&
+        (!('combinedPercentLoad' in data) || data.combinedPercentLoad is number) &&
+        (!('b0' in data) || data.b0 is number) &&
+        (!('b1' in data) || data.b1 is number) &&
+        (!('b2' in data) || data.b2 is number) &&
+        data.createdAt is string && data.createdAt.size() <= 64 &&
+        (!('updatedAt' in data) || (data.updatedAt is string && data.updatedAt.size() <= 64));
+    }
+
+    // User Profile rules
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming());
+      allow update: if isOwner(userId) && isValidId(userId) && isValidUserProfile(incoming()) &&
+                    incoming().userId == existing().userId &&
+                    (!('createdAt' in existing()) || incoming().createdAt == existing().createdAt);
+      allow delete: if false;
+
+      // Subcollection: Salt Records
+      match /salt_records/{recordId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(recordId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(recordId) && isValidSaltRecord(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(recordId) && isValidSaltRecord(incoming(), userId) &&
+                      incoming().userId == existing().userId &&
+                      incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(recordId);
+      }
+
+      // Subcollection: Silica Records
+      match /silica_records/{recordId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(recordId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(recordId) && isValidSilicaRecord(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(recordId) && isValidSilicaRecord(incoming(), userId) &&
+                      incoming().userId == existing().userId &&
+                      incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(recordId);
+      }
+
+      // Subcollection: Cycle Predictions
+      match /cycle_predictions/{predictionId} {
+        allow get: if isOwner(userId) && isValidId(userId) && isValidId(predictionId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(userId) && isValidId(predictionId) && isValidCyclePrediction(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(userId) && isValidId(predictionId) && isValidCyclePrediction(incoming(), userId) &&
+                      incoming().userId == existing().userId &&
+                      incoming().createdAt == existing().createdAt;
+        allow delete: if isOwner(userId) && isValidId(userId) && isValidId(predictionId);
+      }
+    }
+  }
+}

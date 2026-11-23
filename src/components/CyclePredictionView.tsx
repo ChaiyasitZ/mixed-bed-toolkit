@@ -2661,7 +2661,6 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       <th className="py-2.5 px-3 whitespace-nowrap">
                         <div className="leading-snug">
                           <div className="text-[13px] sm:text-sm font-bold text-[var(--ink)]">{isTh ? 'รอบ' : 'Step'}</div>
-                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(Cycle)</div>
                         </div>
                       </th>
                       <th className="py-2.5 px-3 text-right whitespace-nowrap">
@@ -2787,7 +2786,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
                         <div className="leading-snug">
                           <div className="text-[13px] font-bold text-[var(--ink)]">Cond. Inlet</div>
-                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mS/cm)</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(µS/cm)</div>
                         </div>
                       </th>
                       <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
@@ -2799,7 +2798,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
                         <div className="leading-snug">
                           <div className="text-[13px] font-bold text-[var(--ink)]">Cond. Outlet</div>
-                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mS/cm)</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(µS/cm)</div>
                         </div>
                       </th>
                       <th className="py-2.5 px-2.5 text-right whitespace-nowrap">

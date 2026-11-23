@@ -28,6 +28,7 @@ import {
   OctagonAlert,
   BellRing,
   Droplets,
+  Sigma,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -37,6 +38,8 @@ import {
   DEFAULT_SILICA_CAPACITY,
   DEFAULT_TRAIN_B_COND_CAPACITY,
   DEFAULT_TRAIN_B_SILICA_CAPACITY,
+  LAMBDA_0_NACL,
+  MOLAR_MASS_SIO2,
   recalculateBatchRows,
   isNonPhysicalCycleRow,
   normalizeCycleRecordToBatch,
@@ -389,7 +392,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     setInputLabel(isTh ? `รอบที่ ${processedCycles.length + 1}` : `Step ${processedCycles.length + 1}`);
   }, [processedCycles.length, isTh, activeTrain]);
 
-  const [tableTab, setTableTab] = useState<'input' | 'silica' | 'cond'>('input');
+  const [tableTab, setTableTab] = useState<'input' | 'silica' | 'cond' | 'predict'>('input');
   const [displayMode, setDisplayMode] = useState<'table' | 'cards'>('table');
 
   const [editingRowState, setEditingRowState] = useState<{
@@ -403,6 +406,11 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     silicaIn: string;
     silicaOut: string;
   } | null>(null);
+  const [editRowError, setEditRowError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEditRowError(null);
+  }, [editingRowState?.rowId]);
 
   const [isBatchBrowserOpen, setIsBatchBrowserOpen] = useState(false);
   // Default formula display hidden (false) as requested
@@ -778,6 +786,96 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     };
   }, [processedCycles, totalCap]);
 
+  // Number formatter for weighted-average prediction values ('—' when not computable)
+  const fmtNum = (v: number | null | undefined, digits: number) =>
+    v === null || v === undefined || !Number.isFinite(v)
+      ? '—'
+      : v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+
+  // Weighted-Average Cycle Prediction
+  //   ΔSilica (mol/m³) = Silica Inlet (mol/m³) − Silica Outlet (mol/m³)
+  //   ΔCond.  (mol/m³) = Cond. Inlet (mol/m³) − Cond. Outlet (mol/m³)
+  //   Weighted Average = Σ(ΔV × Δ) ÷ Σ(ΔV)  (cumulative from step 1 to current step)
+  //   90% Warning (m³) = (Capacity × 0.90) ÷ (WA Silica + WA Cond.)   → Train A: 71.63 mol
+  //   95% Stop    (m³) = (Capacity × 0.95) ÷ (WA Silica + WA Cond.)   → Train A: 75.61 mol
+  const weightedPrediction = useMemo(() => {
+    const warnMol = Number((totalCap * 0.9).toFixed(2));
+    const stopMol = Number((totalCap * 0.95).toFixed(2));
+    let sumDV = 0;
+    let sumDVxDSilica = 0;
+    let sumDVxDCond = 0;
+    let invalidCount = 0;
+
+    const rows = processedCycles.map((c) => {
+      const silicaInMolM3 = (c.silicaIn / 1_000_000 / MOLAR_MASS_SIO2) * 1000;
+      const silicaOutMolM3 = (c.silicaOut / 1_000_000 / MOLAR_MASS_SIO2) * 1000;
+      const condInMolM3 = (c.condIn / (1000 * LAMBDA_0_NACL)) * 1000;
+      const condOutMolM3 = (c.condOut / (1000 * LAMBDA_0_NACL)) * 1000;
+      const dSilica = silicaInMolM3 - silicaOutMolM3;
+      const dCond = condInMolM3 - condOutMolM3;
+
+      const issues: string[] = [];
+      const rawValues = [c.cycleEnd, c.silicaIn, c.silicaOut, c.condIn, c.condOut];
+      if (rawValues.some((v) => !Number.isFinite(v))) {
+        issues.push(isTh ? 'มีค่าที่ไม่ใช่ตัวเลข' : 'Non-numeric value');
+      } else if (rawValues.some((v) => v < 0)) {
+        issues.push(isTh ? 'มีค่าติดลบ' : 'Negative value');
+      }
+      if (!(c.distance > 0)) {
+        issues.push(
+          isTh ? 'ΔV ต้องมากกว่า 0 (Cycle ต้องมากกว่ารอบก่อนหน้า)' : 'ΔV must be > 0 (Cycle must exceed previous step)'
+        );
+      }
+      if (dSilica < 0) issues.push(isTh ? 'Silica Outlet มากกว่า Inlet' : 'Silica Outlet > Inlet');
+      if (dCond < 0) issues.push(isTh ? 'Cond. Outlet มากกว่า Inlet' : 'Cond. Outlet > Inlet');
+
+      const isValid = issues.length === 0;
+      if (isValid) {
+        sumDV += c.distance;
+        sumDVxDSilica += c.distance * dSilica;
+        sumDVxDCond += c.distance * dCond;
+      } else {
+        invalidCount += 1;
+      }
+
+      return {
+        rowId: c.rowId,
+        step: c.step,
+        silicaInMolM3,
+        silicaOutMolM3,
+        dSilica,
+        waSilica: sumDV > 0 ? sumDVxDSilica / sumDV : null,
+        condInMolM3,
+        condOutMolM3,
+        dCond,
+        waCond: sumDV > 0 ? sumDVxDCond / sumDV : null,
+        isValid,
+        issues,
+      };
+    });
+
+    const waSilica = sumDV > 0 ? sumDVxDSilica / sumDV : null;
+    const waCond = sumDV > 0 ? sumDVxDCond / sumDV : null;
+    const denominator = waSilica !== null && waCond !== null ? waSilica + waCond : null;
+    const canDivide = denominator !== null && Number.isFinite(denominator) && denominator > 1e-12;
+
+    return {
+      rows,
+      rowMap: new Map(rows.map((r) => [r.rowId, r])),
+      sumDV,
+      waSilica,
+      waCond,
+      denominator,
+      canDivide,
+      noValidRows: sumDV <= 0,
+      warnMol,
+      stopMol,
+      warnVolume: canDivide ? warnMol / (denominator as number) : null,
+      stopVolume: canDivide ? stopMol / (denominator as number) : null,
+      invalidCount,
+    };
+  }, [processedCycles, totalCap, isTh]);
+
   const plantSummary = useMemo(() => {
     if (!lastCycle) {
       return {
@@ -851,6 +949,14 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     if (workingInputs.some((r) => Math.abs(r.cycleEnd - end) < 0.0001)) {
       setErrorMessage(
         isTh ? `มีแถวปริมาตร ${end.toFixed(3)} m³ อยู่แล้ว` : `Volume ${end.toFixed(3)} m³ already exists.`
+      );
+      return;
+    }
+    if (lastCycle && end <= lastCycle.cycleEnd) {
+      setErrorMessage(
+        isTh
+          ? `ค่า Cycle (m³) ต้องมากกว่ารอบก่อนหน้า (${lastCycle.cycleEnd.toFixed(2)} m³) เพื่อให้ ΔV มากกว่า 0`
+          : `Cycle (m³) must be greater than the previous step (${lastCycle.cycleEnd.toFixed(2)} m³) so that ΔV > 0.`
       );
       return;
     }
@@ -1231,9 +1337,21 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     const cOut = parseFloat(editingRowState.condOut);
     const sIn = parseFloat(editingRowState.silicaIn);
     const sOut = parseFloat(editingRowState.silicaOut);
-    if (isNaN(end) || end <= 0 || isNaN(cIn) || isNaN(cOut) || isNaN(sIn) || isNaN(sOut)) {
+    if ([end, cIn, cOut, sIn, sOut].some((v) => isNaN(v) || !Number.isFinite(v))) {
+      setEditRowError(isTh ? 'กรุณากรอกค่าเป็นตัวเลขให้ครบทุกช่อง' : 'All fields must be valid numbers.');
       return;
     }
+    if (end <= 0) {
+      setEditRowError(isTh ? 'ค่า Cycle (m³) ต้องมากกว่า 0' : 'Cycle (m³) must be greater than 0.');
+      return;
+    }
+    if ([cIn, cOut, sIn, sOut].some((v) => v < 0)) {
+      setEditRowError(
+        isTh ? 'ค่า Silica และ Cond. (Inlet/Outlet) ต้องไม่ติดลบ' : 'Silica and Cond. values must not be negative.'
+      );
+      return;
+    }
+    setEditRowError(null);
 
     if (editingRowState.target === 'workspace') {
       setWorkingInputs(() => {
@@ -2465,6 +2583,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 },
                 { id: 'silica' as const, label: isTh ? '2. การคำนวณ Silica' : '2. Silica Calculation' },
                 { id: 'cond' as const, label: isTh ? '3. การคำนวณ Conductivity' : '3. Conductivity Calculation' },
+                { id: 'predict' as const, label: isTh ? '4. ทำนาย Cycle' : '4. Cycle Prediction' },
               ].map((tab) => {
                 const active = tableTab === tab.id;
                 return (
@@ -2749,6 +2868,18 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       </th>
                       <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
                         <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">ΔSilica</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol/m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-indigo-700 dark:text-indigo-300">Weighted Average of Silica</div>
+                          <div className="text-[11px] font-mono font-semibold text-indigo-600/90 dark:text-indigo-300/90">(mol/m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
                           <div className="text-[13px] font-bold text-[var(--ink)]">Ion ที่ใช้ไป</div>
                           <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol)</div>
                         </div>
@@ -2809,6 +2940,18 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       </th>
                       <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
                         <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">ΔCond.</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol/m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-sky-700 dark:text-sky-300">Weighted Average of Cond.</div>
+                          <div className="text-[11px] font-mono font-semibold text-sky-600/90 dark:text-sky-300/90">(mol/m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
                           <div className="text-[13px] font-bold text-[var(--ink)]">Ion ที่ใช้ไป</div>
                           <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol)</div>
                         </div>
@@ -2828,6 +2971,41 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       <th className="py-2.5 px-2.5 text-right text-[13px] font-bold text-[var(--ink)] whitespace-nowrap">{isTh ? 'จัดการ' : 'Edit'}</th>
                     </tr>
                   )}
+                  {tableTab === 'predict' && (
+                    <tr className="align-top">
+                      <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 whitespace-nowrap">#</th>
+                      {[
+                        { title: 'Cycle', unit: '(m³)', tone: '' },
+                        { title: 'ΔV', unit: '(m³)', tone: '' },
+                        { title: 'Silica Inlet', unit: '(mol/m³)', tone: '' },
+                        { title: 'Silica Outlet', unit: '(mol/m³)', tone: '' },
+                        { title: 'ΔSilica', unit: '(mol/m³)', tone: '' },
+                        { title: 'Weighted Average of Silica', unit: '(mol/m³)', tone: 'silica' },
+                        { title: 'Cond. Inlet', unit: '(mol/m³)', tone: '' },
+                        { title: 'Cond. Outlet', unit: '(mol/m³)', tone: '' },
+                        { title: 'ΔCond.', unit: '(mol/m³)', tone: '' },
+                        { title: 'Weighted Average of Cond.', unit: '(mol/m³)', tone: 'cond' },
+                      ].map((h) => (
+                        <th key={h.title} className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                          <div className="leading-snug">
+                            <div
+                              className={`text-[13px] font-bold ${
+                                h.tone === 'silica'
+                                  ? 'text-indigo-700 dark:text-indigo-300'
+                                  : h.tone === 'cond'
+                                  ? 'text-sky-700 dark:text-sky-300'
+                                  : 'text-[var(--ink)]'
+                              }`}
+                            >
+                              {h.title}
+                            </div>
+                            <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">{h.unit}</div>
+                          </div>
+                        </th>
+                      ))}
+                      <th className="py-2.5 px-2.5 text-right text-[13px] font-bold text-[var(--ink)] whitespace-nowrap">{isTh ? 'จัดการ' : 'Edit'}</th>
+                    </tr>
+                  )}
                 </thead>
                 <tbody className="divide-y divide-[var(--line)] font-mono tabular-nums whitespace-nowrap">
                   {processedCycles.map((c, idx) => {
@@ -2839,6 +3017,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                     const isWarn90 = !isNonPhysical && !isExhausted && !isStop95 && govPct >= 90;
                     const isMaxSafeStep = plantSummary?.maxSafeRowWithin98?.rowId === c.rowId;
                     const isSelected = inspectedStepIndex === idx;
+                    const wp = weightedPrediction.rowMap.get(c.rowId);
 
                     return (
                       <tr
@@ -2891,6 +3070,10 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                             <td className="py-2 px-2.5 text-right">{c.silicaOut.toFixed(2)}</td>
                             <td className="py-2 px-2.5 text-right">{c.silicaConcOutMolL.toFixed(8)}</td>
                             <td className="py-2 px-2.5 text-right font-semibold">{c.silicaConcOutMolM3.toFixed(3)}</td>
+                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.dSilica, 6)}</td>
+                            <td className="py-2 px-2.5 text-right font-bold text-indigo-600 dark:text-indigo-400">
+                              {fmtNum(wp?.waSilica, 6)}
+                            </td>
                             <td className="py-2 px-2.5 text-right font-bold">{c.silicaIonsRemoved.toFixed(3)}</td>
                             <td className="py-2 px-2.5 text-right font-bold text-indigo-600 dark:text-indigo-400">
                               {c.cumulativeSilicaLoad.toFixed(3)}
@@ -2910,11 +3093,44 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                             <td className="py-2 px-2.5 text-right">{c.concInMolM3.toFixed(3)}</td>
                             <td className="py-2 px-2.5 text-right">{c.condOut.toFixed(3)}</td>
                             <td className="py-2 px-2.5 text-right">{c.concOutMolM3.toFixed(3)}</td>
+                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.dCond, 6)}</td>
+                            <td className="py-2 px-2.5 text-right font-bold text-sky-600 dark:text-sky-400">
+                              {fmtNum(wp?.waCond, 6)}
+                            </td>
                             <td className="py-2 px-2.5 text-right font-bold">{c.ionsRemoved.toFixed(3)}</td>
                             <td className="py-2 px-2.5 text-right font-bold text-[var(--accent)]">
                               {c.cumulativeIonLoad.toFixed(3)}
                             </td>
                             <td className="py-2 px-2.5 text-right font-bold">{c.condPercentLoad.toFixed(3)}%</td>
+                          </>
+                        )}
+
+                        {tableTab === 'predict' && (
+                          <>
+                            <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 bg-[var(--panel)]">
+                              <span className="inline-flex items-center gap-1">
+                                {c.step}
+                                {wp && !wp.isValid && (
+                                  <span title={wp.issues.join(' · ')}>
+                                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+                                  </span>
+                                )}
+                              </span>
+                            </td>
+                            <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">{c.cycleEnd.toFixed(2)}</td>
+                            <td className="py-2 px-2.5 text-right text-[var(--ink-soft)]">{c.distance.toFixed(2)}</td>
+                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.silicaInMolM3, 6)}</td>
+                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.silicaOutMolM3, 6)}</td>
+                            <td className="py-2 px-2.5 text-right font-semibold">{fmtNum(wp?.dSilica, 6)}</td>
+                            <td className="py-2 px-2.5 text-right font-bold text-indigo-600 dark:text-indigo-400">
+                              {fmtNum(wp?.waSilica, 6)}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.condInMolM3, 6)}</td>
+                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.condOutMolM3, 6)}</td>
+                            <td className="py-2 px-2.5 text-right font-semibold">{fmtNum(wp?.dCond, 6)}</td>
+                            <td className="py-2 px-2.5 text-right font-bold text-sky-600 dark:text-sky-400">
+                              {fmtNum(wp?.waCond, 6)}
+                            </td>
                           </>
                         )}
 
@@ -2960,6 +3176,110 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
               </table>
             </div>
           )}
+
+          {/* Weighted-Average Prediction: 90% System Warning & 95% System Stop */}
+          <div className="p-4 rounded-xl border border-[var(--line)] bg-[var(--bg)]/60 space-y-3">
+            <div className="flex items-center gap-2">
+              <Sigma className="w-4 h-4 text-[var(--accent)] shrink-0" />
+              <h4 className="text-sm font-bold text-[var(--ink)]">
+                {isTh
+                  ? 'การคำนวณจุดแจ้งเตือนและจุดหยุดระบบ (Weighted Average)'
+                  : 'System Warning & Stop Point Calculation (Weighted Average)'}
+              </h4>
+            </div>
+            <div className="text-xs text-[var(--ink-soft)] font-mono leading-relaxed">
+              <div>Weighted Average = Σ(ΔV × ΔC) ÷ Σ(ΔV)</div>
+              <div>
+                {isTh ? 'จุดแจ้งเตือนระบบ (90%)' : 'System Warning (90%)'} = {fmtNum(weightedPrediction.warnMol, 2)} mol ÷
+                (WA Silica + WA Cond.)
+              </div>
+              <div>
+                {isTh ? 'จุดหยุดระบบ (95%)' : 'System Stop (95%)'} = {fmtNum(weightedPrediction.stopMol, 2)} mol ÷ (WA
+                Silica + WA Cond.)
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+              <div className="p-3 rounded-lg bg-[var(--panel)] border border-[var(--line)]">
+                <div className="text-xs font-semibold text-[var(--ink-soft)]">Weighted Average of Silica</div>
+                <div className="text-base font-bold font-mono tabular-nums text-indigo-600 dark:text-indigo-400">
+                  {fmtNum(weightedPrediction.waSilica, 6)}{' '}
+                  <span className="text-xs font-normal text-[var(--ink-soft)]">mol/m³</span>
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-[var(--panel)] border border-[var(--line)]">
+                <div className="text-xs font-semibold text-[var(--ink-soft)]">Weighted Average of Cond.</div>
+                <div className="text-base font-bold font-mono tabular-nums text-sky-600 dark:text-sky-400">
+                  {fmtNum(weightedPrediction.waCond, 6)}{' '}
+                  <span className="text-xs font-normal text-[var(--ink-soft)]">mol/m³</span>
+                </div>
+              </div>
+              <div className="p-3 rounded-lg bg-[var(--panel)] border border-[var(--line)]">
+                <div className="text-xs font-semibold text-[var(--ink-soft)]">
+                  {isTh ? 'ตัวหาร (WA Silica + WA Cond.)' : 'Divisor (WA Silica + WA Cond.)'}
+                </div>
+                <div className="text-base font-bold font-mono tabular-nums text-[var(--ink)]">
+                  {fmtNum(weightedPrediction.denominator, 6)}{' '}
+                  <span className="text-xs font-normal text-[var(--ink-soft)]">mol/m³</span>
+                </div>
+              </div>
+            </div>
+
+            {weightedPrediction.canDivide ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                <div className="p-3.5 rounded-lg bg-amber-500/[0.06] border border-amber-500/40 space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-xs sm:text-[13px] font-bold text-amber-600 dark:text-amber-400">
+                    <span>{isTh ? 'จุดแจ้งเตือนระบบ (90%)' : 'System Warning Point (90%)'}</span>
+                    <BellRing className="w-3.5 h-3.5 shrink-0" />
+                  </div>
+                  <div className="text-xl font-bold font-mono tabular-nums text-amber-500 dark:text-amber-400">
+                    {fmtNum(weightedPrediction.warnVolume, 2)}{' '}
+                    <span className="text-xs font-normal text-[var(--ink-soft)]">m³</span>
+                  </div>
+                  <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)]">
+                    {fmtNum(weightedPrediction.warnMol, 2)} mol ÷ {fmtNum(weightedPrediction.denominator, 6)} mol/m³
+                  </div>
+                </div>
+                <div className="p-3.5 rounded-lg bg-rose-500/[0.06] border border-rose-500/40 space-y-1">
+                  <div className="flex items-center justify-between gap-2 text-xs sm:text-[13px] font-bold text-rose-600 dark:text-rose-400">
+                    <span>{isTh ? 'จุดหยุดระบบ (95%)' : 'System Stop Point (95%)'}</span>
+                    <OctagonAlert className="w-3.5 h-3.5 shrink-0" />
+                  </div>
+                  <div className="text-xl font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400">
+                    {fmtNum(weightedPrediction.stopVolume, 2)}{' '}
+                    <span className="text-xs font-normal text-[var(--ink-soft)]">m³</span>
+                  </div>
+                  <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)]">
+                    {fmtNum(weightedPrediction.stopMol, 2)} mol ÷ {fmtNum(weightedPrediction.denominator, 6)} mol/m³
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="p-3 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-700 dark:text-amber-300 text-xs font-semibold flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500 mt-0.5" />
+                <span>
+                  {weightedPrediction.noValidRows
+                    ? isTh
+                      ? 'ยังคำนวณจุดแจ้งเตือนและจุดหยุดระบบไม่ได้: ไม่มีแถวข้อมูลที่ถูกต้อง (Σ(ΔV) = 0) กรุณาตรวจสอบว่า Cycle เพิ่มขึ้นทุกรอบ และค่า Outlet ไม่มากกว่า Inlet'
+                      : 'Cannot calculate warning/stop points: no valid rows (Σ(ΔV) = 0). Check that Cycle increases every step and Outlet does not exceed Inlet.'
+                    : isTh
+                    ? 'ยังคำนวณจุดแจ้งเตือนและจุดหยุดระบบไม่ได้: ตัวหาร (WA Silica + WA Cond.) เท่ากับศูนย์ เพราะค่า Inlet เท่ากับ Outlet ทุกแถว'
+                    : 'Cannot calculate warning/stop points: the divisor (WA Silica + WA Cond.) is zero because Inlet equals Outlet in every row.'}
+                </span>
+              </div>
+            )}
+
+            {weightedPrediction.invalidCount > 0 && (
+              <div className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                <span>
+                  {isTh
+                    ? `ไม่นำ ${weightedPrediction.invalidCount} แถวที่ข้อมูลไม่ถูกต้องมาคำนวณ Weighted Average (ดูเครื่องหมาย ⚠ ในแท็บ "4. ทำนาย Cycle")`
+                    : `${weightedPrediction.invalidCount} invalid row(s) excluded from the weighted average (see ⚠ in the "4. Cycle Prediction" tab).`}
+                </span>
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -3669,6 +3989,12 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                     />
                   </div>
                 </div>
+                {editRowError && (
+                  <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/40 text-rose-600 dark:text-rose-400 text-xs font-semibold flex items-center gap-2">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    <span>{editRowError}</span>
+                  </div>
+                )}
                 <div className="flex justify-end gap-2 pt-2">
                   <button
                     type="button"

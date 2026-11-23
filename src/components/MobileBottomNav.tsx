@@ -78,13 +78,13 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
                   }`}
                 />
                 {item.count !== null && item.count > 0 && (
-                  <span className="text-[10px] font-mono tabular-nums font-semibold text-[var(--ink-soft)]">
+                  <span className="text-[11px] font-mono tabular-nums font-semibold text-[var(--ink-soft)]">
                     ({item.count > 99 ? '99+' : item.count})
                   </span>
                 )}
               </div>
 
-              <span className="text-[11px] mt-0.5 tracking-tight truncate max-w-full whitespace-nowrap">
+              <span className="text-xs font-medium mt-0.5 truncate max-w-full whitespace-nowrap">
                 {item.label}
               </span>
             </button>

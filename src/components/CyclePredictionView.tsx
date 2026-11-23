@@ -27,7 +27,6 @@ import {
   Table as TableIcon,
   OctagonAlert,
   BellRing,
-  Sigma,
   Droplets,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -157,22 +156,6 @@ export const PLANT_TRAIN_B_BENCHMARK: CycleRowInput[] = [
   { cycleEnd: 2008.43, condIn: 5.63, condOut: 0.076, silicaIn: 243.85, silicaOut: 8.69, label: 'รอบที่ 14' },
   { cycleEnd: 2014.38, condIn: 5.61, condOut: 0.076, silicaIn: 239.41, silicaOut: 10.1, label: 'รอบที่ 15' },
 ];
-
-// Standard Normal CDF approximation (Abramowitz & Stegun 7.1.26, max error < 1.5e-7)
-function normalCDF(z: number): number {
-  if (z < -8) return 0;
-  if (z > 8) return 1;
-  const sign = z < 0 ? -1 : 1;
-  const x = Math.abs(z) / Math.sqrt(2);
-  const t = 1 / (1 + 0.3275911 * x);
-  const a1 = 0.254829592;
-  const a2 = -0.284496736;
-  const a3 = 1.421413741;
-  const a4 = -1.453152027;
-  const a5 = 1.061405429;
-  const erf = 1 - (((((a5 * t + a4) * t + a3) * t + a2) * t + a1) * t) * Math.exp(-x * x);
-  return 0.5 * (1 + sign * erf);
-}
 
 const WORKSPACE_DRAFT_KEY = 'mb_toolkit_cycle_workspace_draft_v10';
 
@@ -352,15 +335,24 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
   }, [activeTrain, trainWorkspaces]);
 
   useEffect(() => {
-    if (records.length > 0) {
-      (['A', 'B'] as const).forEach((tKey) => {
-        const ebId = trainWorkspaces[tKey].editingBatchId;
-        if (ebId && !records.some((r) => r.id === ebId)) {
-          updateTrainWorkspace(tKey, { editingBatchId: null, editingBatchCreatedAt: null });
-        }
-      });
-    }
-  }, [records]);
+    (['A', 'B'] as const).forEach((tKey) => {
+      const ebId = trainWorkspaces[tKey].editingBatchId;
+      if (!ebId) return;
+      const isLocalId = ebId.startsWith('local_pred_');
+      // Clear mismatched ID immediately when switching between Cloud and Guest modes
+      if ((user && isLocalId) || (!user && !isLocalId)) {
+        updateTrainWorkspace(tKey, { editingBatchId: null, editingBatchCreatedAt: null });
+        return;
+      }
+      const matched = records.find((r) => r.id === ebId);
+      if (records.length > 0 && !matched) {
+        updateTrainWorkspace(tKey, { editingBatchId: null, editingBatchCreatedAt: null });
+      } else if (matched && matched.createdAt && trainWorkspaces[tKey].editingBatchCreatedAt !== matched.createdAt) {
+        // Keep editingBatchCreatedAt strictly synced with the authoritative record timestamp
+        updateTrainWorkspace(tKey, { editingBatchCreatedAt: matched.createdAt });
+      }
+    });
+  }, [records, user?.uid]);
 
   const defaultCondCapForTrain =
     train === 'B' ? DEFAULT_TRAIN_B_COND_CAPACITY : DEFAULT_COND_CAPACITY;
@@ -397,7 +389,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     setInputLabel(isTh ? `รอบที่ ${processedCycles.length + 1}` : `Step ${processedCycles.length + 1}`);
   }, [processedCycles.length, isTh, activeTrain]);
 
-  const [tableTab, setTableTab] = useState<'all' | 'stats' | 'silica' | 'cond'>('all');
+  const [tableTab, setTableTab] = useState<'input' | 'silica' | 'cond'>('input');
   const [displayMode, setDisplayMode] = useState<'table' | 'cards'>('table');
 
   const [editingRowState, setEditingRowState] = useState<{
@@ -415,8 +407,6 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
   const [isBatchBrowserOpen, setIsBatchBrowserOpen] = useState(false);
   // Default formula display hidden (false) as requested
   const [showFormulaDetails, setShowFormulaDetails] = useState<boolean>(false);
-  // Default statistical & probability distribution dashboard hidden (false) when first opening page
-  const [showStatisticalDashboard, setShowStatisticalDashboard] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -429,73 +419,38 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     onConfirm: () => void | Promise<void>;
   } | null>(null);
 
-  // Live calculation preview of the current row being typed (falls back to previous cycle values as default when available)
-  const previewCalc = useMemo(() => {
-    const hasAnyTypedInput =
-      inputCycle.trim() !== '' ||
-      inputCondIn.trim() !== '' ||
-      inputCondOut.trim() !== '' ||
-      inputSilicaIn.trim() !== '' ||
-      inputSilicaOut.trim() !== '';
-
-    if (!hasAnyTypedInput) {
-      return null;
-    }
-
+  // Lightweight readiness check for "+ Add Step" button (does NOT trigger live calculations while typing)
+  const canAddRow = useMemo(() => {
     const end = parseFloat(inputCycle);
     const cIn = inputCondIn.trim() !== '' ? parseFloat(inputCondIn) : lastCycle ? lastCycle.condIn : NaN;
     const cOut = inputCondOut.trim() !== '' ? parseFloat(inputCondOut) : lastCycle ? lastCycle.condOut : NaN;
     const sIn = inputSilicaIn.trim() !== '' ? parseFloat(inputSilicaIn) : lastCycle ? lastCycle.silicaIn : NaN;
     const sOut = inputSilicaOut.trim() !== '' ? parseFloat(inputSilicaOut) : lastCycle ? lastCycle.silicaOut : NaN;
 
-    if (isNaN(end) || isNaN(cIn) || isNaN(cOut) || isNaN(sIn) || isNaN(sOut)) {
-      return null;
-    }
-
-    const simulated = recalculateBatchRows(
-      [
-        ...workingInputs,
-        {
-          rowId: '__preview__',
-          label: inputLabel,
-          cycleEnd: end,
-          condIn: cIn,
-          condOut: cOut,
-          silicaIn: sIn,
-          silicaOut: sOut,
-        },
-      ],
-      cCap,
-      isTh,
-      false,
-      sCap
+    return (
+      !isNaN(end) &&
+      end > 0 &&
+      !isNaN(cIn) &&
+      cIn >= 0 &&
+      !isNaN(cOut) &&
+      cOut >= 0 &&
+      !isNaN(sIn) &&
+      sIn >= 0 &&
+      !isNaN(sOut) &&
+      sOut >= 0
     );
-
-    const previewRow =
-      simulated.rows.find((r) => r.rowId === '__preview__') || simulated.rows[simulated.rows.length - 1];
-
-    return {
-      row: previewRow,
-      dist: previewRow.distance,
-    };
-  }, [inputCycle, inputCondIn, inputCondOut, inputSilicaIn, inputSilicaOut, inputLabel, workingInputs, lastCycle, cCap, sCap, isTh]);
+  }, [inputCycle, inputCondIn, inputCondOut, inputSilicaIn, inputSilicaOut, lastCycle]);
 
   const inspectorRow = useMemo(() => {
-    if (previewCalc) return previewCalc.row;
     if (processedCycles.length > 0) {
       return processedCycles[inspectedStepIndex] || processedCycles[0];
     }
     return null;
-  }, [previewCalc, processedCycles, inspectedStepIndex]);
+  }, [processedCycles, inspectedStepIndex]);
 
-  // Independent Real-Time 8-Step Calculator for Conductivity (Cond.) & Silica (SiO2) inside the Formula Box
+  // Independent 8-Step Formula Inspector for Conductivity (Cond.) & Silica (SiO2) based on recorded rows
   const liveFormulaCalc = useMemo(() => {
-    const isTypingAny =
-      inputCycle.trim() !== '' ||
-      inputCondIn.trim() !== '' ||
-      inputCondOut.trim() !== '' ||
-      inputSilicaIn.trim() !== '' ||
-      inputSilicaOut.trim() !== '';
+    const isTypingAny = false;
 
     const rawCondCap = parseFloat(condCapacity);
     const rawSilicaCap = parseFloat(silicaCapacity);
@@ -505,12 +460,12 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     const activeSilicaCap = hasValidSilicaCap ? rawSilicaCap : defaultSilicaCapForTrain;
     const activeTotalCap = Number((activeCondCap + activeSilicaCap).toFixed(2));
 
-    // Determine source values: live typed inputs -> selected inspectorRow -> benchmark example (156.81 m³)
-    const hasTypedCycle = inputCycle.trim() !== '' && !isNaN(parseFloat(inputCycle));
-    const hasTypedCondIn = inputCondIn.trim() !== '' && !isNaN(parseFloat(inputCondIn));
-    const hasTypedCondOut = inputCondOut.trim() !== '' && !isNaN(parseFloat(inputCondOut));
-    const hasTypedSilicaIn = inputSilicaIn.trim() !== '' && !isNaN(parseFloat(inputSilicaIn));
-    const hasTypedSilicaOut = inputSilicaOut.trim() !== '' && !isNaN(parseFloat(inputSilicaOut));
+    // Determine source values: selected inspectorRow -> benchmark example (156.81 m³)
+    const hasTypedCycle = false;
+    const hasTypedCondIn = false;
+    const hasTypedCondOut = false;
+    const hasTypedSilicaIn = false;
+    const hasTypedSilicaOut = false;
 
     const prevCycleVol = isTypingAny
       ? lastCycle
@@ -705,27 +660,12 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     return processedCycles.filter((r) => isNonPhysicalCycleRow(r));
   }, [processedCycles]);
 
-  // Comprehensive Statistical, Threshold (90%, 95%, 98%), and Probability Distribution Analysis
-  const statisticalAnalysis = useMemo(() => {
-    const activeRows =
-      processedCycles.length > 0
-        ? processedCycles
-        : previewCalc
-        ? [previewCalc.row]
-        : [];
+  // Threshold Control Analysis (90% System Warning & 95% System Stop) — Computed only from added rows
+  const thresholdAnalysis = useMemo(() => {
+    const activeRows = processedCycles;
 
     if (activeRows.length === 0) {
       return {
-        n: 0,
-        meanDeltaV: 0,
-        sdDeltaV: 0,
-        meanDeltaPct: 0,
-        sdDeltaPct: 0,
-        meanSilicaDeltaPct: 0,
-        sdSilicaDeltaPct: 0,
-        meanRatePctPerM3: 0,
-        sdRatePctPerM3: 0,
-        overallRatePctPerM3: 0,
         checkpoint90: {
           targetPct: 90,
           targetMol: Number((0.9 * totalCap).toFixed(3)),
@@ -748,75 +688,29 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
           isReached: false,
           remainingVolume: 0,
         },
-        checkpoint98: {
-          targetPct: 98,
-          targetMol: Number((0.98 * totalCap).toFixed(3)),
-          interpolatedVolume: 0,
-          lastSafeRow: null,
-          firstReachedRow: null,
-          safeVolumeBeforeThreshold: 0,
-          safeCycleCount: 0,
-          isReached: false,
-          remainingVolume: 0,
-        },
-        checkpoint100: {
-          targetPct: 100,
-          targetMol: totalCap,
-          interpolatedVolume: 0,
-          lastSafeRow: null,
-          firstReachedRow: null,
-          safeVolumeBeforeThreshold: 0,
-          safeCycleCount: 0,
-          isReached: false,
-          remainingVolume: 0,
-        },
-        ci95LowVolume: 0,
-        ci95HighVolume: 0,
-        cycleProbabilities: [],
         currentZone: 'normal' as const,
         finalGoverningPct: 0,
       };
     }
 
     const n = activeRows.length;
-    const deltaVolumes = activeRows.map((r) => Math.max(0, r.distance));
     const deltaCombinedPcts = activeRows.map((r, i) =>
       Math.max(0, r.combinedPercentLoad - (i === 0 ? 0 : activeRows[i - 1].combinedPercentLoad))
     );
-    const deltaSilicaPcts = activeRows.map((r, i) =>
-      Math.max(0, r.silicaPercentLoad - (i === 0 ? 0 : activeRows[i - 1].silicaPercentLoad))
-    );
-    const governingPcts = activeRows.map((r) => Math.max(r.combinedPercentLoad, r.silicaPercentLoad));
-    const deltaGovPcts = governingPcts.map((pct, i) => Math.max(0, pct - (i === 0 ? 0 : governingPcts[i - 1])));
-
     const stepRatesPctPerM3 = activeRows.map((r, i) =>
       r.distance > 0 ? deltaCombinedPcts[i] / r.distance : 0
     );
 
     const mean = (arr: number[]) => (arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
-    const stdDev = (arr: number[], mu: number) => {
-      if (arr.length <= 1) return Math.max(mu * 0.1, 0.001);
-      const variance = arr.reduce((acc, val) => acc + Math.pow(val - mu, 2), 0) / (arr.length - 1);
-      return Math.sqrt(variance);
-    };
-
-    const meanDeltaV = mean(deltaVolumes);
-    const sdDeltaV = stdDev(deltaVolumes, meanDeltaV);
-
     const meanDeltaPct = mean(deltaCombinedPcts);
-    const sdDeltaPct = stdDev(deltaCombinedPcts, meanDeltaPct);
-
-    const meanSilicaDeltaPct = mean(deltaSilicaPcts);
-    const sdSilicaDeltaPct = stdDev(deltaSilicaPcts, meanSilicaDeltaPct);
-
     const meanRatePctPerM3 = mean(stepRatesPctPerM3);
-    const sdRatePctPerM3 = stdDev(stepRatesPctPerM3, meanRatePctPerM3);
 
     const totalVolume = activeRows[n - 1].cycleEnd;
     const finalCombinedPct = activeRows[n - 1].combinedPercentLoad;
     const finalSilicaPct = activeRows[n - 1].silicaPercentLoad;
     const finalGoverningPct = Math.max(finalCombinedPct, finalSilicaPct);
-    const overallRatePctPerM3 = totalVolume > 0 && finalCombinedPct > 0 ? finalCombinedPct / totalVolume : meanRatePctPerM3;
+    const overallRatePctPerM3 =
+      totalVolume > 0 && finalCombinedPct > 0 ? finalCombinedPct / totalVolume : meanRatePctPerM3;
 
     const findThresholdPoint = (targetPct: number) => {
       const idx = activeRows.findIndex((r) => r.combinedPercentLoad >= targetPct);
@@ -854,7 +748,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
         interpolatedVolume: Number(Math.max(0, interpolatedVolume).toFixed(3)),
         lastSafeRow,
         firstReachedRow,
-        safeVolumeBeforeThreshold: lastSafeRow ? lastSafeRow.cycleEnd : Number(Math.max(0, interpolatedVolume).toFixed(3)),
+        safeVolumeBeforeThreshold: lastSafeRow
+          ? lastSafeRow.cycleEnd
+          : Number(Math.max(0, interpolatedVolume).toFixed(3)),
         safeCycleCount: lastSafeRow ? lastSafeRow.step : estimatedCycles,
         isReached: finalCombinedPct >= targetPct || finalSilicaPct >= targetPct,
         remainingVolume: Math.max(0, interpolatedVolume - totalVolume),
@@ -863,94 +759,27 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
 
     const checkpoint90 = findThresholdPoint(90);
     const checkpoint95 = findThresholdPoint(95);
-    const checkpoint98 = findThresholdPoint(98);
-    const checkpoint100 = findThresholdPoint(100);
-
-    const cycleProbabilities = activeRows.map((r, i) => {
-      const cumVol = r.cycleEnd;
-      const govPct = Math.max(r.combinedPercentLoad, r.silicaPercentLoad);
-      const sigmaFromRate = sdRatePctPerM3 * cumVol / Math.sqrt(Math.max(1, i + 1));
-      const sigmaFromStep = sdDeltaPct / Math.sqrt(Math.max(1, n / (i + 1)));
-      const effectiveSigma = Math.max(0.85, Math.min(8.5, (sigmaFromRate + sigmaFromStep) / 2));
-
-      const zScore98 = (govPct - 98) / effectiveSigma;
-      const probReach98 = normalCDF(zScore98) * 100;
-
-      const zScore95 = (govPct - 95) / effectiveSigma;
-      const probReach95 = normalCDF(zScore95) * 100;
-
-      const controlZone: 'normal' | 'warn95' | 'stop98' | 'breakthrough' =
-        govPct >= 100 || r.condOut >= 0.1 || r.silicaOut >= 10
-          ? 'breakthrough'
-          : govPct >= 98
-          ? 'stop98'
-          : govPct >= 95
-          ? 'warn95'
-          : 'normal';
-
-      return {
-        rowId: r.rowId,
-        step: r.step,
-        label: r.label,
-        cycleEnd: r.cycleEnd,
-        distance: r.distance,
-        deltaCombinedPct: deltaCombinedPcts[i],
-        deltaSilicaPct: deltaSilicaPcts[i],
-        deltaGovPct: deltaGovPcts[i],
-        combinedPercentLoad: r.combinedPercentLoad,
-        silicaPercentLoad: r.silicaPercentLoad,
-        governingPct: govPct,
-        stepRatePctPerM3: stepRatesPctPerM3[i],
-        effectiveSigma,
-        zScore98,
-        probReach98,
-        probReach95,
-        controlZone,
-      };
-    });
-
-    const relUncertainty =
-      meanRatePctPerM3 > 0
-        ? Math.min(0.15, (1.96 * (sdRatePctPerM3 / Math.sqrt(Math.max(1, n)))) / meanRatePctPerM3)
-        : 0.03;
-    const ci95LowVolume = Math.max(0, checkpoint98.interpolatedVolume * (1 - relUncertainty));
-    const ci95HighVolume = checkpoint98.interpolatedVolume * (1 + relUncertainty);
 
     const lastActive = activeRows[n - 1];
-    const currentZone: 'normal' | 'warn95' | 'stop98' | 'breakthrough' =
+    const currentZone: 'normal' | 'warn90' | 'stop95' | 'breakthrough' =
       finalGoverningPct >= 100 || lastActive.condOut >= 0.1 || lastActive.silicaOut >= 10
         ? 'breakthrough'
-        : finalGoverningPct >= 98
-        ? 'stop98'
         : finalGoverningPct >= 95
-        ? 'warn95'
+        ? 'stop95'
+        : finalGoverningPct >= 90
+        ? 'warn90'
         : 'normal';
 
     return {
-      n,
-      meanDeltaV,
-      sdDeltaV,
-      meanDeltaPct,
-      sdDeltaPct,
-      meanSilicaDeltaPct,
-      sdSilicaDeltaPct,
-      meanRatePctPerM3,
-      sdRatePctPerM3,
-      overallRatePctPerM3,
       checkpoint90,
       checkpoint95,
-      checkpoint98,
-      checkpoint100,
-      ci95LowVolume,
-      ci95HighVolume,
-      cycleProbabilities,
       currentZone,
       finalGoverningPct,
     };
-  }, [processedCycles, previewCalc, totalCap]);
+  }, [processedCycles, totalCap]);
 
   const plantSummary = useMemo(() => {
-    if (!lastCycle && !previewCalc) {
+    if (!lastCycle) {
       return {
         totalVolume: 0,
         currentCombinedPercent: 0,
@@ -968,26 +797,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
         firstCutoffRowAbove98: null,
       };
     }
-    if (!lastCycle && previewCalc) {
-      const r = previewCalc.row;
-      const rem = Math.max(0, r.predictedCycle - r.cycleEnd);
-      return {
-        totalVolume: r.cycleEnd,
-        currentCombinedPercent: r.combinedPercentLoad,
-        currentSilicaPercent: r.silicaPercentLoad,
-        currentCondPercent: r.condPercentLoad,
-        currentCombinedIonLoad: r.totalCombinedIonLoad,
-        currentCondIonLoad: r.cumulativeIonLoad,
-        currentSilicaIonLoad: r.cumulativeSilicaLoad,
-        predictedCutoffVolume: r.predictedCycle,
-        predictedBreakthroughVolume: Number((r.predictedCycle / 0.98).toFixed(3)),
-        predictedSilicaCutoffVolume: r.predictedCycle,
-        remainingVolumeTo98: rem,
-        predictedTotalCycleCount98: r.combinedPercentLoad > 0 ? Math.max(1, Math.floor(98 / r.combinedPercentLoad)) : 1,
-        maxSafeRowWithin98: r.combinedPercentLoad <= 98 ? r : null,
-        firstCutoffRowAbove98: r.combinedPercentLoad > 98 ? r : null,
-      };
-    }
+
     const totalVolume = activeBatchCalc.cycleEnd;
     const currentCombinedPercent = activeBatchCalc.combinedPercentLoad;
     const currentSilicaPercent = activeBatchCalc.silicaPercentLoad;
@@ -1014,9 +824,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
       maxSafeRowWithin98: activeBatchCalc.maxSafeRowWithin98,
       firstCutoffRowAbove98: activeBatchCalc.firstCutoffRowAbove98,
     };
-  }, [lastCycle, previewCalc, activeBatchCalc]);
+  }, [lastCycle, activeBatchCalc]);
 
-  const hasCycleData = processedCycles.length > 0 || Boolean(previewCalc);
+  const hasCycleData = processedCycles.length > 0;
 
   const handleAddRowToBatch = () => {
     setErrorMessage(null);
@@ -1073,7 +883,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
       isOpen: true,
       title: isTh ? `ลบ "${label}" ออกจากตาราง?` : `Remove "${label}"?`,
       message: isTh
-        ? 'ระบบจะคำนวณระยะห่าง (ΔV), Ion Load, % Load, ค่าสถิติ และจุดตัดรอบ 98% ของแถวที่เหลือใหม่อัตโนมัติ'
+        ? 'ระบบจะคำนวณระยะห่าง (ΔV), Ion Load, % Load และจุดหยุดระบบ 95% ของแถวที่เหลือใหม่อัตโนมัติ'
         : 'Remaining rows will be automatically recalculated.',
       onConfirm: () => {
         setWorkingInputs((prev) =>
@@ -1126,48 +936,64 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
         updatedAt: new Date().toISOString(),
       };
 
-      const isUpdatingExisting = !saveAsNew && Boolean(editingBatchId);
+      const existingRecord = editingBatchId
+        ? records.find((r) => r.id === editingBatchId)
+        : undefined;
+      const isUpdatingExisting = !saveAsNew && Boolean(existingRecord);
 
-      if (isUpdatingExisting && editingBatchId) {
+      if (isUpdatingExisting && existingRecord) {
+        const authoritativeCreatedAt =
+          existingRecord.createdAt || editingBatchCreatedAt || new Date().toISOString();
         if (user) {
-          await updateCyclePrediction(
-            editingBatchId,
-            editingBatchCreatedAt || new Date().toISOString(),
-            batchPayload
-          );
+          await updateCyclePrediction(existingRecord.id, authoritativeCreatedAt, batchPayload);
         } else if (onUpdateLocalRecord) {
-          onUpdateLocalRecord(editingBatchId, batchPayload);
+          onUpdateLocalRecord(existingRecord.id, batchPayload);
         }
+        updateTrainWorkspace(activeTrain, {
+          editingBatchId: existingRecord.id,
+          editingBatchCreatedAt: authoritativeCreatedAt,
+        });
         setSaveSuccessMessage(
           isTh
-            ? `อัปเดต "${cleanBatchName}" (${activeBatchCalc.rowCount} แถว) เรียบร้อยแล้ว`
-            : `Updated "${cleanBatchName}" (${activeBatchCalc.rowCount} rows)`
+            ? `อัปเดต "${cleanBatchName}" (${activeBatchCalc.rowCount} แถว) ลง${user ? 'ฐานข้อมูล Cloud' : 'เครื่อง'}เรียบร้อยแล้ว`
+            : `Updated "${cleanBatchName}" (${activeBatchCalc.rowCount} rows) in ${user ? 'Cloud DB' : 'local storage'}`
         );
       } else {
+        const createdAtIso = new Date().toISOString();
         if (user) {
-          const newId = await addCyclePrediction(batchPayload);
-          if (newId) {
-            setEditingBatchId(newId);
-            setEditingBatchCreatedAt(new Date().toISOString());
+          const newId = await addCyclePrediction(batchPayload, createdAtIso);
+          if (!newId) {
+            throw new Error(isTh ? 'ไม่สามารถบันทึกข้อมูลลงฐานข้อมูล Cloud ได้' : 'Cloud save failed');
           }
+          updateTrainWorkspace(activeTrain, {
+            editingBatchId: newId,
+            editingBatchCreatedAt: createdAtIso,
+          });
         } else {
           const maybeId = onAddLocalRecord(batchPayload);
           if (typeof maybeId === 'string' && maybeId) {
-            setEditingBatchId(maybeId);
-            setEditingBatchCreatedAt(new Date().toISOString());
+            updateTrainWorkspace(activeTrain, {
+              editingBatchId: maybeId,
+              editingBatchCreatedAt: createdAtIso,
+            });
           }
         }
         setSaveSuccessMessage(
           isTh
-            ? `บันทึก "${cleanBatchName}" (${activeBatchCalc.rowCount} แถว) เป็น 1 ชุดเรียบร้อยแล้ว`
-            : `Saved "${cleanBatchName}" (${activeBatchCalc.rowCount} rows) as 1 batch`
+            ? `บันทึก "${cleanBatchName}" (${activeBatchCalc.rowCount} แถว) ลง${user ? 'ฐานข้อมูล Cloud' : 'เครื่อง'}เรียบร้อยแล้ว`
+            : `Saved "${cleanBatchName}" (${activeBatchCalc.rowCount} rows) to ${user ? 'Cloud DB' : 'local storage'}`
         );
       }
 
       setTimeout(() => setSaveSuccessMessage(null), 4000);
     } catch (err) {
       console.error('Batch save error:', err);
-      setErrorMessage(isTh ? 'เกิดข้อผิดพลาดในการบันทึก' : 'Failed to save batch.');
+      const detail = err instanceof Error ? err.message : '';
+      setErrorMessage(
+        isTh
+          ? `เกิดข้อผิดพลาดในการบันทึก${detail ? `: ${detail.slice(0, 120)}` : ''}`
+          : `Failed to save batch${detail ? `: ${detail.slice(0, 120)}` : ''}`
+      );
     } finally {
       setIsSaving(false);
     }
@@ -1341,9 +1167,15 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
       };
 
       if (user) {
-        const newId = await addCyclePrediction(batchPayload);
+        const createdAtIso = new Date().toISOString();
+        const newId = await addCyclePrediction(batchPayload, createdAtIso);
         await Promise.all(legacySingleRowRecords.map((r) => deleteCyclePrediction(r.id)));
-        if (newId) setEditingBatchId(newId);
+        if (newId) {
+          updateTrainWorkspace(activeTrain, {
+            editingBatchId: newId,
+            editingBatchCreatedAt: createdAtIso,
+          });
+        }
       } else {
         legacySingleRowRecords.forEach((r) => onDeleteLocalRecord(r.id));
         onAddLocalRecord(batchPayload);
@@ -1516,12 +1348,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
   };
 
   const handleExportActiveBatch = (format: ExportFormat) => {
-    const rowsToExport =
-      processedCycles.length > 0
-        ? processedCycles
-        : previewCalc
-        ? [previewCalc.row]
-        : [];
+    const rowsToExport = processedCycles;
     if (!rowsToExport.length) return;
 
     exportBatchesToFile(
@@ -1532,10 +1359,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
           condCapacity: cCap,
           silicaCapacity: sCap,
           rows: rowsToExport,
-          predictedCutoff95Volume: statisticalAnalysis?.checkpoint95.interpolatedVolume,
-          predictedCutoff98Volume: plantSummary?.predictedCutoffVolume,
+          predictedWarning90Volume: thresholdAnalysis?.checkpoint90.interpolatedVolume,
+          predictedStop95Volume: plantSummary?.predictedCutoffVolume,
           predictedBreakthroughVolume: plantSummary?.predictedBreakthroughVolume,
-          probReach98ByRow: statisticalAnalysis?.cycleProbabilities.map((p) => p.probReach98),
         },
       ],
       format,
@@ -1552,12 +1378,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     const padT = 28;
     const padB = 56;
 
-    const chartRows =
-      processedCycles.length > 0
-        ? processedCycles
-        : previewCalc
-        ? [previewCalc.row]
-        : [];
+    const chartRows = processedCycles;
 
     const maxVol =
       chartRows.length > 0
@@ -1596,8 +1417,8 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
 
     const lastPt = actualCombinedPoints[actualCombinedPoints.length - 1];
     const projPoints: { vol: number; pct: number }[] = [];
-    if (chartRows.length > 0 && lastPt.pct > 0 && lastPt.pct < 98 && plantSummary.predictedCutoffVolume > lastPt.vol) {
-      projPoints.push({ vol: plantSummary.predictedCutoffVolume, pct: 98 });
+    if (chartRows.length > 0 && lastPt.pct > 0 && lastPt.pct < 95 && plantSummary.predictedCutoffVolume > lastPt.vol) {
+      projPoints.push({ vol: plantSummary.predictedCutoffVolume, pct: 95 });
     }
     if (chartRows.length > 0 && lastPt.pct > 0 && lastPt.pct < 100 && plantSummary.predictedBreakthroughVolume > lastPt.vol) {
       projPoints.push({ vol: plantSummary.predictedBreakthroughVolume, pct: 100 });
@@ -1611,8 +1432,8 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     // Generate 6 evenly spaced X-axis ticks for Cycle (m³)
     const xTicks = [0, 0.2, 0.4, 0.6, 0.8, 1.0].map((ratio) => Number((maxVol * ratio).toFixed(0)));
 
-    // Well-spaced Y-axis ticks that never overlap
-    const yTicks = [0, 20, 40, 60, 80, 95, 98];
+    // Well-spaced Y-axis ticks that never overlap (includes 90% warning & 95% stop)
+    const yTicks = [0, 20, 40, 60, 80, 90, 95];
 
     return {
       W,
@@ -1632,7 +1453,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
       silicaPolyline,
       forecastPolyline,
     };
-  }, [processedCycles, previewCalc, plantSummary]);
+  }, [processedCycles, plantSummary]);
 
   return (
     <div className="space-y-5">
@@ -1650,8 +1471,8 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
             </h1>
             <p className="text-xs text-[var(--ink-soft)] truncate">
               {isTh
-                ? 'เกณฑ์การแจ้งเตือนที่ 95% และจุดตัดรอบหยุดระบบที่ 98%'
-                : 'Warning threshold at 95% and system cutoff stop at 98%'}
+                ? 'เกณฑ์จุดแจ้งเตือนระบบ 90% และจุดหยุดระบบ 95%'
+                : 'System warning threshold at 90% and system stop at 95%'}
             </p>
           </div>
         </div>
@@ -1805,7 +1626,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
               </div>
 
               <div className="text-right font-mono tabular-nums shrink-0">
-                <div className="text-[11px] text-[var(--ink-soft)]">
+                <div className="text-xs text-[var(--ink-soft)]">
                   {isTh ? 'บันทึกแล้ว' : 'Saved'}
                 </div>
                 <div className="text-xs sm:text-sm font-bold text-[var(--ink)]">
@@ -1821,10 +1642,10 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
       <div className="rounded-2xl bg-[var(--panel)] border border-[var(--line)] overflow-hidden">
         {/* Batch Config Top Sub-Bar */}
         <div className="p-3.5 sm:p-4 bg-[var(--bg)]/40 border-b border-[var(--line)]">
-          <div className="grid grid-cols-2 sm:grid-cols-6 lg:grid-cols-12 gap-3 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-end">
             {/* Batch Name */}
-            <div className="col-span-2 sm:col-span-3 lg:col-span-4 space-y-1">
-              <label className="text-xs font-semibold text-[var(--ink)] flex items-center gap-1.5 truncate">
+            <div className="space-y-1">
+              <label className="text-xs sm:text-[13px] font-semibold text-[var(--ink)] flex items-center gap-1.5 truncate">
                 <Layers className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                 <span>
                   {isTh
@@ -1840,39 +1661,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
               />
             </div>
 
-            {/* Cond Capacity */}
-            <div className="col-span-1 sm:col-span-2 lg:col-span-2 space-y-1">
-              <label className="text-xs font-semibold text-[var(--ink)] block truncate">
-                Cond Capacity (mol)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={condCapacity}
-                onChange={(e) => setCondCapacity(e.target.value)}
-                placeholder={train === 'B' ? '106.47' : '73.91'}
-                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/45 placeholder:font-normal"
-              />
-            </div>
-
-            {/* Silica Capacity */}
-            <div className="col-span-1 sm:col-span-2 lg:col-span-2 space-y-1">
-              <label className="text-xs font-semibold text-[var(--ink)] block truncate">
-                Silica Capacity (mol)
-              </label>
-              <input
-                type="number"
-                step="0.01"
-                value={silicaCapacity}
-                onChange={(e) => setSilicaCapacity(e.target.value)}
-                placeholder={train === 'B' ? '5.93' : '5.68'}
-                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/45 placeholder:font-normal"
-              />
-            </div>
-
             {/* Benchmark Quick Loaders (Filtered by Active Train A or Train B) */}
-            <div className="col-span-2 sm:col-span-5 lg:col-span-4 space-y-1">
-              <label className="text-xs font-semibold text-[var(--ink-soft)] block truncate">
+            <div className="space-y-1">
+              <label className="text-xs sm:text-[13px] font-semibold text-[var(--ink-soft)] block truncate">
                 {isTh
                   ? `โหลดชุดข้อมูลอ้างอิง (สายการผลิต Train ${train})`
                   : `Load Benchmark (Train ${train})`}
@@ -1908,6 +1699,36 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                   </button>
                 </div>
               )}
+            </div>
+
+            {/* Estimate maximum conductivity capacity(mol) */}
+            <div className="space-y-1">
+              <label className="text-xs sm:text-[13px] font-semibold text-[var(--ink)] block leading-snug">
+                Estimate maximum conductivity capacity(mol)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={condCapacity}
+                onChange={(e) => setCondCapacity(e.target.value)}
+                placeholder={train === 'B' ? '106.47' : '73.91'}
+                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/50 placeholder:font-normal"
+              />
+            </div>
+
+            {/* Estimate maximum silica capacity(mol) */}
+            <div className="space-y-1">
+              <label className="text-xs sm:text-[13px] font-semibold text-[var(--ink)] block leading-snug">
+                Estimate maximum silica capacity(mol)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                value={silicaCapacity}
+                onChange={(e) => setSilicaCapacity(e.target.value)}
+                placeholder={train === 'B' ? '5.93' : '5.68'}
+                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/50 placeholder:font-normal"
+              />
             </div>
           </div>
         </div>
@@ -1952,22 +1773,22 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
 
         {/* Input Parameter Fields (Default placeholders 0.00 / 0.000 when no previous cycle exists) */}
         <div className="p-4 sm:p-5 space-y-4">
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 items-end">
             <div className="col-span-2 sm:col-span-1 space-y-1">
-              <label className="text-xs font-bold text-[var(--ink)] block truncate">Cycle (m³)</label>
+              <label className="text-xs sm:text-[13px] font-bold text-[var(--ink)] block leading-snug">Cycle (m³)</label>
               <input
                 type="number"
                 step="0.01"
                 value={inputCycle}
                 onChange={(e) => setInputCycle(e.target.value)}
                 placeholder={lastCycle ? `${lastCycle.cycleEnd.toFixed(2)}` : '0.00'}
-                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/40 placeholder:font-normal"
+                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/50 placeholder:font-normal"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-bold text-[var(--ink)] block truncate">
-                Silica MB Inlet (ppb)
+              <label className="text-xs sm:text-[13px] font-bold text-[var(--ink)] block leading-snug">
+                Silica MB Inlet/RO Outlet (ppb)
               </label>
               <input
                 type="number"
@@ -1975,12 +1796,12 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 value={inputSilicaIn}
                 onChange={(e) => setInputSilicaIn(e.target.value)}
                 placeholder={lastCycle ? `${lastCycle.silicaIn.toFixed(2)}` : '0.00'}
-                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/40 placeholder:font-normal"
+                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/50 placeholder:font-normal"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-bold text-[var(--ink)] block truncate">
+              <label className="text-xs sm:text-[13px] font-bold text-[var(--ink)] block leading-snug">
                 Silica MB Outlet (ppb)
               </label>
               <input
@@ -1989,13 +1810,13 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 value={inputSilicaOut}
                 onChange={(e) => setInputSilicaOut(e.target.value)}
                 placeholder={lastCycle ? `${lastCycle.silicaOut.toFixed(2)}` : '0.00'}
-                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/40 placeholder:font-normal"
+                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/50 placeholder:font-normal"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-bold text-[var(--ink)] block truncate">
-                Cond MB Inlet (µS/cm)
+              <label className="text-xs sm:text-[13px] font-bold text-[var(--ink)] block leading-snug">
+                Cond. MB Inlet/RO Outlet (µS/cm)
               </label>
               <input
                 type="number"
@@ -2003,12 +1824,12 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 value={inputCondIn}
                 onChange={(e) => setInputCondIn(e.target.value)}
                 placeholder={lastCycle ? `${lastCycle.condIn.toFixed(3)}` : '0.000'}
-                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/40 placeholder:font-normal"
+                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/50 placeholder:font-normal"
               />
             </div>
 
             <div className="space-y-1">
-              <label className="text-xs font-bold text-[var(--ink)] block truncate">
+              <label className="text-xs sm:text-[13px] font-bold text-[var(--ink)] block leading-snug">
                 Cond MB Outlet (µS/cm)
               </label>
               <input
@@ -2017,7 +1838,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 value={inputCondOut}
                 onChange={(e) => setInputCondOut(e.target.value)}
                 placeholder={lastCycle ? `${lastCycle.condOut.toFixed(3)}` : '0.000'}
-                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/40 placeholder:font-normal"
+                className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/50 placeholder:font-normal"
               />
             </div>
           </div>
@@ -2038,7 +1859,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
             <button
               type="button"
               onClick={handleAddRowToBatch}
-              disabled={!previewCalc}
+              disabled={!canAddRow}
               className="px-4 py-2 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-deep)] text-white font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-all disabled:opacity-50 shrink-0 whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
@@ -2144,16 +1965,16 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                           <h4 className="text-xs sm:text-sm font-bold text-sky-600 dark:text-sky-400">
                             ส่วนที่ 1: Conductivity (Cond.)
                           </h4>
-                          <span className="text-[11px] font-mono font-semibold text-[var(--ink-soft)]">
-                            Cond. Capacity = {liveFormulaCalc.activeCondCap.toFixed(2)} (ค่าคงที่ Train A = 73.91)
+                          <span className="text-xs font-mono font-semibold text-[var(--ink-soft)]">
+                            Estimate maximum conductivity capacity(mol) = {liveFormulaCalc.activeCondCap.toFixed(2)} (Train A = 73.91)
                           </span>
                         </div>
-                        <div className="text-[11px] text-[var(--ink-soft)]">
-                          Input ที่ผู้ใช้กรอก: 1. Cycle (m³) เช่น 156.81 · 2. Cond. MB Inlet/RO Outlet (μS/cm) เช่น 5.270 · 3. Cond. MB Outlet (μS/cm) เช่น 0.076
+                        <div className="text-xs text-[var(--ink-soft)]">
+                          Input ที่ผู้ใช้กรอก: 1. Cycle (m³) เช่น 156.81 · 2. Cond. MB Inlet (μS/cm) เช่น 5.270 · 3. Cond. MB Outlet (μS/cm) เช่น 0.076
                         </div>
                       </div>
 
-                      <div className="space-y-1.5 text-[11px]">
+                      <div className="space-y-1.5 text-xs">
                         {/* Cond Step 1 */}
                         <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
                           <div className="font-sans font-bold text-[var(--ink)]">
@@ -2296,7 +2117,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                         {/* Cond Step 8 (Requires Outlet) */}
                         <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
                           <div className="font-sans font-bold text-[var(--ink)]">
-                            8. Percent Cond. Load on Resin (%) = (Ion Load Cond. / Cond. Capacity) × 100
+                            8. Percent Cond. Load on Resin (%) = (Ion Load Cond. / Estimate maximum conductivity capacity(mol)) × 100
                           </div>
                           <div className="text-[var(--ink-soft)]">
                             {liveFormulaCalc.condOutReady && liveFormulaCalc.condInReady && liveFormulaCalc.cycleReady ? (
@@ -2323,16 +2144,16 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                           <h4 className="text-xs sm:text-sm font-bold text-indigo-600 dark:text-indigo-400">
                             ส่วนที่ 2: Silica (SiO₂)
                           </h4>
-                          <span className="text-[11px] font-mono font-semibold text-[var(--ink-soft)]">
-                            MW SiO₂ = 60.08 g/mol · Silica Capacity = {liveFormulaCalc.activeSilicaCap.toFixed(2)}
+                          <span className="text-xs font-mono font-semibold text-[var(--ink-soft)]">
+                            MW SiO₂ = 60.08 g/mol · Estimate maximum silica capacity(mol) = {liveFormulaCalc.activeSilicaCap.toFixed(2)}
                           </span>
                         </div>
-                        <div className="text-[11px] text-[var(--ink-soft)]">
-                          Input ที่ผู้ใช้กรอก: 1. Cycle (m³) เช่น 156.81 · 2. Silica MB Inlet/RO Outlet (ppb) เช่น 185.30 · 3. Silica MB Outlet (ppb) เช่น 1
+                        <div className="text-xs text-[var(--ink-soft)]">
+                          Input ที่ผู้ใช้กรอก: 1. Cycle (m³) เช่น 156.81 · 2. Silica MB Inlet (ppb) เช่น 185.30 · 3. Silica MB Outlet (ppb) เช่น 1
                         </div>
                       </div>
 
-                      <div className="space-y-1.5 text-[11px]">
+                      <div className="space-y-1.5 text-xs">
                         {/* Silica Step 1 */}
                         <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
                           <div className="font-sans font-bold text-[var(--ink)]">
@@ -2506,7 +2327,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                         <div className="text-xs sm:text-sm font-bold text-emerald-600 dark:text-emerald-400">
                           การคำนวณ Percent Load on Resin
                         </div>
-                        <div className="text-[11px] text-[var(--ink-soft)]">
+                        <div className="text-xs text-[var(--ink-soft)]">
                           สูตรทั่วไป: Percent Load on Resin (%) = [(Ion load Cond. + Ion load Silica) / Total Capacity] × 100
                         </div>
                       </div>
@@ -2519,24 +2340,24 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                             </strong>
                           </span>
                         ) : (
-                          <span className="text-amber-500 font-sans text-[11px]">
+                          <span className="text-amber-500 font-sans text-xs">
                             รอการกรอกค่า Outlet ของทั้งสองส่วนเพื่อคำนวณ Percent Load on Resin (%)
                           </span>
                         )}
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-[11px] font-sans">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-sans">
                       {/* Train A Reference */}
                       <div className="p-2.5 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-1">
                         <div className="font-bold text-emerald-600 dark:text-emerald-400">
                           Train A
                         </div>
                         <ul className="space-y-0.5 text-[var(--ink-soft)] font-mono">
-                          <li>• Cond. Capacity = <strong className="text-[var(--ink)]">73.91</strong></li>
-                          <li>• Silica Capacity = <strong className="text-[var(--ink)]">5.68</strong></li>
+                          <li>• Estimate maximum conductivity capacity(mol) = <strong className="text-[var(--ink)]">73.91</strong></li>
+                          <li>• Estimate maximum silica capacity(mol) = <strong className="text-[var(--ink)]">5.68</strong></li>
                           <li>• Total Capacity (100%) = 73.91 + 5.68 = <strong className="text-emerald-600 dark:text-emerald-400">79.59</strong></li>
-                          <li className="font-sans">• Silica Capacity แก้ไข = ไม่มี (ใช้ค่า 5.68 ตามที่กำหนด)</li>
+                          <li className="font-sans">• Estimate maximum silica capacity(mol) แก้ไข = ไม่มี (ใช้ค่า 5.68 ตามที่กำหนด)</li>
                         </ul>
                       </div>
 
@@ -2546,9 +2367,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                           Train B
                         </div>
                         <ul className="space-y-0.5 text-[var(--ink-soft)] font-mono">
-                          <li>• Cond. Capacity = <strong className="text-[var(--ink)]">106.47</strong></li>
+                          <li>• Estimate maximum conductivity capacity(mol) = <strong className="text-[var(--ink)]">106.47</strong></li>
                           <li className="font-sans">
-                            • <span className="font-mono">Silica Capacity = <strong className="text-[var(--ink)]">5.93</strong></span> (แก้ไขจาก 5.91 เป็น 5.93)
+                            • <span className="font-mono">Estimate maximum silica capacity(mol) = <strong className="text-[var(--ink)]">5.93</strong></span> (แก้ไขจาก 5.91 เป็น 5.93)
                           </li>
                           <li>• Total Capacity (100%) = 106.47 + 5.93 = <strong className="text-sky-600 dark:text-sky-400">112.40</strong></li>
                         </ul>
@@ -2562,7 +2383,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
         </div>
       </div>
 
-      {/* 3. Summary Table Section (Shown only when user has entered or loaded data) */}
+      {/* 3. Data Entry & Calculation Table Section (Shown only after rows are added) */}
       {hasCycleData && (
         <div className="p-4 sm:p-5 rounded-2xl bg-[var(--panel)] border border-[var(--line)] space-y-3.5">
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-[var(--line)] pb-3">
@@ -2570,8 +2391,11 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
               <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />
               <h3 className="text-sm sm:text-base font-bold text-[var(--ink)] truncate">
                 {isTh
-                  ? `ตารางรวบรวมข้อมูลรายรอบ (${batchName} · ${processedCycles.length} รอบ)`
-                  : `Cycle Data & Control Table (${batchName} · ${processedCycles.length} steps)`}
+                  ? `ตารางบันทึกข้อมูล & คำนวณ (MB Train ${train})`
+                  : `Data Entry & Calculation Table (MB Train ${train})`}
+                <span className="ml-2 text-xs font-normal text-[var(--ink-soft)]">
+                  ({batchName} · {processedCycles.length} {isTh ? 'รอบ' : 'steps'})
+                </span>
               </h3>
             </div>
 
@@ -2631,14 +2455,16 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
             </div>
           </div>
 
-          {/* Table Mode Selector Tabs + View Toggle */}
+          {/* Table Mode Selector Tabs (3 Tabs: Input Log, Silica, Conductivity) + View Toggle */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
             <div className="flex items-center gap-1 overflow-x-auto no-scrollbar p-1 rounded-xl bg-[var(--bg)] border border-[var(--line)]">
               {[
-                { id: 'all' as const, label: isTh ? '1. สรุปรวม & โซนควบคุม' : '1. Summary & Control' },
-                { id: 'stats' as const, label: isTh ? '2. ความน่าจะเป็น P(≥98%) รายรอบ' : '2. Statistical P(≥98%)' },
-                { id: 'silica' as const, label: isTh ? '3. ละเอียด Silica' : '3. Silica Detail' },
-                { id: 'cond' as const, label: isTh ? '4. ละเอียด Conductivity' : '4. Conductivity' },
+                {
+                  id: 'input' as const,
+                  label: isTh ? `1. บันทึกข้อมูล MB Train ${train}` : `1. MB Train ${train} Input Log`,
+                },
+                { id: 'silica' as const, label: isTh ? '2. การคำนวณ Silica' : '2. Silica Calculation' },
+                { id: 'cond' as const, label: isTh ? '3. การคำนวณ Conductivity' : '3. Conductivity Calculation' },
               ].map((tab) => {
                 const active = tableTab === tab.id;
                 return (
@@ -2704,22 +2530,15 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
           )}
 
           {/* Table / Cards Content */}
-          {processedCycles.length === 0 ? (
-            <div className="p-4 text-center text-[var(--ink-soft)] text-xs bg-[var(--bg)]/50 rounded-xl border border-dashed border-[var(--line)]">
-              {isTh
-                ? 'กำลังแสดงตัวอย่างผลการคำนวณจากค่าที่กรอก — กดปุ่ม "+ เพิ่มรอบที่ 1" ด้านบนเพื่อบันทึกลงตาราง'
-                : 'Previewing calculation from current inputs — click "+ Add Step 1" above to add to the table.'}
-            </div>
-          ) : displayMode === 'cards' ? (
+          {displayMode === 'cards' ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {processedCycles.map((c, idx) => {
-                const statRow = statisticalAnalysis?.cycleProbabilities[idx];
                 const govPct = Math.max(c.combinedPercentLoad, c.silicaPercentLoad);
                 const isNonPhysical = isNonPhysicalCycleRow(c);
                 const isExhausted =
                   !isNonPhysical && (govPct >= 100 || c.condOut >= 0.1 || c.silicaOut >= 10);
-                const isStop98 = !isNonPhysical && !isExhausted && govPct >= 98;
-                const isWarn95 = !isNonPhysical && !isExhausted && !isStop98 && govPct >= 95;
+                const isStop95 = !isNonPhysical && !isExhausted && govPct >= 95;
+                const isWarn90 = !isNonPhysical && !isExhausted && !isStop95 && govPct >= 90;
                 const isMaxSafeStep = plantSummary?.maxSafeRowWithin98?.rowId === c.rowId;
                 const isSelected = inspectedStepIndex === idx;
 
@@ -2732,9 +2551,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                     className={`p-3.5 rounded-xl border transition-all cursor-pointer space-y-2.5 ${
                       isSelected
                         ? 'border-[var(--accent)] bg-[var(--bg)]'
-                        : isExhausted || isStop98
+                        : isExhausted || isStop95
                         ? 'border-rose-500/40 bg-rose-500/[0.04]'
-                        : isWarn95
+                        : isWarn90
                         ? 'border-amber-500/40 bg-amber-500/[0.04]'
                         : isMaxSafeStep
                         ? 'border-emerald-500/50 bg-emerald-500/[0.04]'
@@ -2750,13 +2569,17 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                         <span className="text-[11px] font-mono font-semibold text-[var(--ink-soft)]">
                           {isExhausted
                             ? 'Breakthrough'
-                            : isStop98
-                            ? 'หยุดระบบ ≥98%'
-                            : isWarn95
-                            ? 'แจ้งเตือน ≥95%'
-                            : isMaxSafeStep
-                            ? 'สูงสุด <98%'
-                            : `P=${(statRow?.probReach98 ?? 0).toFixed(1)}%`}
+                            : isStop95
+                            ? isTh
+                              ? 'จุดหยุดระบบ ≥95%'
+                              : 'Stop ≥95%'
+                            : isWarn90
+                            ? isTh
+                              ? 'แจ้งเตือน ≥90%'
+                              : 'Warn ≥90%'
+                            : isTh
+                            ? 'ปกติ (<90%)'
+                            : 'Normal (<90%)'}
                         </span>
                         <button
                           type="button"
@@ -2790,29 +2613,36 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 text-xs font-mono tabular-nums">
-                      <div>
-                        <div className="text-[10px] font-sans text-[var(--ink-soft)]">ปริมาตรน้ำสะสม · ΔV (m³)</div>
+                    <div className="grid grid-cols-2 gap-2.5 text-[13px] font-mono tabular-nums">
+                      <div className="col-span-2">
+                        <div className="text-xs font-sans font-medium text-[var(--ink-soft)]">Cycle (m³)</div>
                         <div className="font-bold text-[var(--ink)] truncate">
-                          {c.cycleEnd.toFixed(2)} <span className="text-[var(--ink-soft)] font-normal">({c.distance.toFixed(2)})</span>
+                          {c.cycleEnd.toFixed(2)} m³{' '}
+                          <span className="text-xs text-[var(--ink-soft)] font-normal">(ΔV {c.distance.toFixed(2)} m³)</span>
                         </div>
                       </div>
                       <div>
-                        <div className="text-[10px] font-sans text-[var(--ink-soft)]">P(ถึงเกณฑ์ 98%)</div>
-                        <div className="font-bold text-amber-500 truncate">
-                          {(statRow?.probReach98 ?? 0).toFixed(2)}%
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-[10px] font-sans text-[var(--ink-soft)]">% Load Silica</div>
+                        <div className="text-xs font-sans font-medium text-[var(--ink-soft)]">Silica MB Inlet</div>
                         <div className="font-bold text-indigo-600 dark:text-indigo-400 truncate">
-                          {c.silicaPercentLoad.toFixed(2)}% ({c.cumulativeSilicaLoad.toFixed(3)} mol)
+                          {c.silicaIn.toFixed(2)} ppb
                         </div>
                       </div>
                       <div>
-                        <div className="text-[10px] font-sans text-[var(--ink-soft)]">% Load รวม</div>
-                        <div className="font-bold text-emerald-600 dark:text-emerald-400 truncate">
-                          {c.combinedPercentLoad.toFixed(2)}% ({c.totalCombinedIonLoad.toFixed(3)} mol)
+                        <div className="text-xs font-sans font-medium text-[var(--ink-soft)]">Silica MB Outlet</div>
+                        <div className="font-bold text-[var(--ink)] truncate">
+                          {c.silicaOut.toFixed(2)} ppb
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-sans font-medium text-[var(--ink-soft)]">Cond. MB Inlet</div>
+                        <div className="font-bold text-sky-600 dark:text-sky-400 truncate">
+                          {c.condIn.toFixed(3)} µS/cm
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-xs font-sans font-medium text-[var(--ink-soft)]">Cond MB Outlet</div>
+                        <div className="font-bold text-[var(--ink)] truncate">
+                          {c.condOut.toFixed(3)} µS/cm
                         </div>
                       </div>
                     </div>
@@ -2821,81 +2651,193 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
               })}
             </div>
           ) : (
-            /* Compact Single-Line Engineering Table */
+            /* Compact Two-Line Header Engineering Table (High-contrast readable headers with stacked units) */
             <div className="overflow-x-auto max-h-[480px] overflow-y-auto rounded-xl border border-[var(--line)]">
-              <table className="w-full min-w-[860px] text-xs text-left border-collapse whitespace-nowrap">
-                <thead className="sticky top-0 bg-[var(--panel)] text-[var(--ink-soft)] font-bold border-b border-[var(--line)] z-10">
-                  {tableTab === 'all' && (
-                    <tr>
-                      <th className="py-2 px-2.5 text-center sticky left-0 bg-[var(--panel)] z-20">#</th>
-                      <th className="py-2 px-2.5">{isTh ? 'รอบ (Cycle)' : 'Step'}</th>
-                      <th className="py-2 px-2.5 text-right">{isTh ? 'น้ำสะสม (m³)' : 'Volume (m³)'}</th>
-                      <th className="py-2 px-2.5 text-right">{isTh ? 'น้ำต่อรอบ ΔV (m³)' : 'ΔV (m³)'}</th>
-                      <th className="py-2 px-2.5 text-right text-indigo-600 dark:text-indigo-400">% Load Silica</th>
-                      <th className="py-2 px-2.5 text-right font-bold text-[var(--accent)]">Ion Load รวม (mol)</th>
-                      <th className="py-2 px-2.5 text-right font-bold">% Load on Resin</th>
-                      <th className="py-2 px-2.5 text-right">{isTh ? 'ความน่าจะเป็น P(≥98%)' : 'P(≥98%)'}</th>
-                      <th className="py-2 px-2.5 text-center">{isTh ? 'เกณฑ์ควบคุม (95% / 98%)' : 'Control Status (95%/98%)'}</th>
-                      <th className="py-2 px-2.5 text-right">{isTh ? 'จัดการ' : 'Edit'}</th>
-                    </tr>
-                  )}
-                  {tableTab === 'stats' && (
-                    <tr>
-                      <th className="py-2 px-2.5 text-center sticky left-0 bg-[var(--panel)] z-20">#</th>
-                      <th className="py-2 px-2.5">{isTh ? 'รอบ (Cycle)' : 'Cycle'}</th>
-                      <th className="py-2 px-2.5 text-right">{isTh ? 'ปริมาตรน้ำสะสม (m³)' : 'Cum. Water (m³)'}</th>
-                      <th className="py-2 px-2.5 text-right">{isTh ? 'น้ำที่ผลิตในรอบ ΔV (m³)' : 'Cycle Water ΔV (m³)'}</th>
-                      <th className="py-2 px-2.5 text-right">{isTh ? 'Δ% Load รอบนี้' : 'Δ% Load'}</th>
-                      <th className="py-2 px-2.5 text-right">{isTh ? 'อัตรา (%/m³)' : 'Rate (%/m³)'}</th>
-                      <th className="py-2 px-2.5 text-right font-bold">% Load on Resin</th>
-                      <th className="py-2 px-2.5 text-right">Z-Score (98%)</th>
-                      <th className="py-2 px-2.5 text-right font-bold text-amber-500">P(Load ≥ 98%)</th>
-                      <th className="py-2 px-2.5 text-center">{isTh ? 'คำแนะนำการเดินระบบ' : 'Action'}</th>
+              <table className="w-full text-xs sm:text-[13px] text-left border-collapse">
+                <thead className="sticky top-0 bg-slate-100 dark:bg-slate-800/95 text-[var(--ink)] font-bold border-b-2 border-[var(--line)] z-10">
+                  {tableTab === 'input' && (
+                    <tr className="align-top">
+                      <th className="py-2.5 px-3 text-center text-[13px] sm:text-sm font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 whitespace-nowrap">#</th>
+                      <th className="py-2.5 px-3 whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] sm:text-sm font-bold text-[var(--ink)]">{isTh ? 'รอบ' : 'Step'}</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(Cycle)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-3 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] sm:text-sm font-bold text-[var(--ink)]">Cycle</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-3 text-right">
+                        <div className="leading-snug">
+                          <div className="text-[13px] sm:text-sm font-bold text-indigo-700 dark:text-indigo-300">Silica MB Inlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-indigo-600/90 dark:text-indigo-300/90">(ppb)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-3 text-right">
+                        <div className="leading-snug">
+                          <div className="text-[13px] sm:text-sm font-bold text-[var(--ink)]">Silica MB Outlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(ppb)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-3 text-right">
+                        <div className="leading-snug">
+                          <div className="text-[13px] sm:text-sm font-bold text-sky-700 dark:text-sky-300">Cond. MB Inlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-sky-600/90 dark:text-sky-300/90">(µS/cm)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-3 text-right">
+                        <div className="leading-snug">
+                          <div className="text-[13px] sm:text-sm font-bold text-[var(--ink)]">Cond MB Outlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(µS/cm)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-3 text-right text-[13px] sm:text-sm font-bold text-[var(--ink)] whitespace-nowrap">{isTh ? 'จัดการ' : 'Edit'}</th>
                     </tr>
                   )}
                   {tableTab === 'silica' && (
-                    <tr>
-                      <th className="py-2 px-2.5 text-center sticky left-0 bg-[var(--panel)] z-20">#</th>
-                      <th className="py-2 px-2.5 text-right">Cycle (m³)</th>
-                      <th className="py-2 px-2.5 text-right">ΔV (m³)</th>
-                      <th className="py-2 px-2.5 text-right">Silica Inlet (ppb)</th>
-                      <th className="py-2 px-2.5 text-right">1. In (mol/L)</th>
-                      <th className="py-2 px-2.5 text-right">1. In (mol/m³)</th>
-                      <th className="py-2 px-2.5 text-right">Silica Outlet (ppb)</th>
-                      <th className="py-2 px-2.5 text-right">2. Out (mol/L)</th>
-                      <th className="py-2 px-2.5 text-right">2. Out (mol/m³)</th>
-                      <th className="py-2 px-2.5 text-right">3. Ion หายไป</th>
-                      <th className="py-2 px-2.5 text-right text-indigo-600 dark:text-indigo-400">4. Load Silica</th>
-                      <th className="py-2 px-2.5 text-right font-bold">5. % Silica</th>
-                      <th className="py-2 px-2.5 text-right">{isTh ? 'จัดการ' : 'Edit'}</th>
+                    <tr className="align-top">
+                      <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 whitespace-nowrap">#</th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Cycle</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">ΔV</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Silica MB Inlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(ppb)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Silica Inlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol/L)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Silica Inlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol/m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Silica MB Outlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(ppb)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Silica Outlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol/L)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Silica Outlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol/m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Ion ที่ใช้ไป</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-indigo-700 dark:text-indigo-300">Ion load silica</div>
+                          <div className="text-[11px] font-mono font-semibold text-indigo-600/90 dark:text-indigo-300/90">(mol)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">%Ion load silica</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(%)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right text-[13px] font-bold text-[var(--ink)] whitespace-nowrap">{isTh ? 'จัดการ' : 'Edit'}</th>
                     </tr>
                   )}
                   {tableTab === 'cond' && (
-                    <tr>
-                      <th className="py-2 px-2.5 text-center sticky left-0 bg-[var(--panel)] z-20">#</th>
-                      <th className="py-2 px-2.5">{isTh ? 'รอบ' : 'Step'}</th>
-                      <th className="py-2 px-2.5 text-right">Cycle (m³)</th>
-                      <th className="py-2 px-2.5 text-right">ΔV (m³)</th>
-                      <th className="py-2 px-2.5 text-right">Cond Inlet (µS)</th>
-                      <th className="py-2 px-2.5 text-right">Conc Inlet (mol/m³)</th>
-                      <th className="py-2 px-2.5 text-right">Cond Outlet (µS)</th>
-                      <th className="py-2 px-2.5 text-right">Conc Outlet (mol/m³)</th>
-                      <th className="py-2 px-2.5 text-right">Ion หายไป (mol)</th>
-                      <th className="py-2 px-2.5 text-right font-bold text-[var(--accent)]">Load Cond (mol)</th>
-                      <th className="py-2 px-2.5 text-right font-bold">% Cond</th>
-                      <th className="py-2 px-2.5 text-right">{isTh ? 'จัดการ' : 'Edit'}</th>
+                    <tr className="align-top">
+                      <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 whitespace-nowrap">#</th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Cycle</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">ΔV</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Cond. Inlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mS/cm)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Cond. Inlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol/m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Cond. Outlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mS/cm)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Cond. Outlet</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol/m³)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">Ion ที่ใช้ไป</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(mol)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-sky-700 dark:text-sky-300">Ion load cond.</div>
+                          <div className="text-[11px] font-mono font-semibold text-sky-600/90 dark:text-sky-300/90">(mol)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
+                        <div className="leading-snug">
+                          <div className="text-[13px] font-bold text-[var(--ink)]">% Ion load cond.</div>
+                          <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(%)</div>
+                        </div>
+                      </th>
+                      <th className="py-2.5 px-2.5 text-right text-[13px] font-bold text-[var(--ink)] whitespace-nowrap">{isTh ? 'จัดการ' : 'Edit'}</th>
                     </tr>
                   )}
                 </thead>
-                <tbody className="divide-y divide-[var(--line)] font-mono tabular-nums">
+                <tbody className="divide-y divide-[var(--line)] font-mono tabular-nums whitespace-nowrap">
                   {processedCycles.map((c, idx) => {
-                    const statRow = statisticalAnalysis?.cycleProbabilities[idx];
                     const govPct = Math.max(c.combinedPercentLoad, c.silicaPercentLoad);
                     const isNonPhysical = isNonPhysicalCycleRow(c);
                     const isExhausted =
                       !isNonPhysical && (govPct >= 100 || c.condOut >= 0.1 || c.silicaOut >= 10);
-                    const isStop98 = !isNonPhysical && !isExhausted && govPct >= 98;
-                    const isWarn95 = !isNonPhysical && !isExhausted && !isStop98 && govPct >= 95;
+                    const isStop95 = !isNonPhysical && !isExhausted && govPct >= 95;
+                    const isWarn90 = !isNonPhysical && !isExhausted && !isStop95 && govPct >= 90;
                     const isMaxSafeStep = plantSummary?.maxSafeRowWithin98?.rowId === c.rowId;
                     const isSelected = inspectedStepIndex === idx;
 
@@ -2908,97 +2850,32 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                             ? 'bg-sky-500/10'
                             : isNonPhysical
                             ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300 font-semibold'
-                            : isExhausted || isStop98
+                            : isExhausted || isStop95
                             ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 font-semibold'
-                            : isWarn95
+                            : isWarn90
                             ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400 font-semibold'
                             : isMaxSafeStep
                             ? 'bg-emerald-500/10 font-semibold'
                             : 'hover:bg-[var(--bg)]'
                         }`}
                       >
-                        {tableTab === 'all' && (
+                        {tableTab === 'input' && (
                           <>
                             <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 bg-[var(--panel)]">
                               {c.step}
                             </td>
                             <td className="py-2 px-2.5 font-sans font-medium">{c.label}</td>
-                            <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">{c.cycleEnd.toFixed(2)}</td>
-                            <td className="py-2 px-2.5 text-right text-[var(--ink-soft)]">{c.distance.toFixed(2)}</td>
-                            <td className="py-2 px-2.5 text-right font-bold text-indigo-600 dark:text-indigo-400">
-                              {c.silicaPercentLoad.toFixed(3)}%
+                            <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">
+                              {c.cycleEnd.toFixed(2)}
                             </td>
-                            <td className="py-2 px-2.5 text-right font-bold text-[var(--accent)]">
-                              {c.totalCombinedIonLoad.toFixed(3)}
+                            <td className="py-2 px-2.5 text-right font-semibold text-indigo-600 dark:text-indigo-400">
+                              {c.silicaIn.toFixed(2)}
                             </td>
-                            <td className="py-2 px-2.5 text-right font-bold">{c.combinedPercentLoad.toFixed(3)}%</td>
-                            <td className="py-2 px-2.5 text-right font-semibold text-amber-500">
-                              {(statRow?.probReach98 ?? 0).toFixed(2)}%
+                            <td className="py-2 px-2.5 text-right">{c.silicaOut.toFixed(2)}</td>
+                            <td className="py-2 px-2.5 text-right font-semibold text-sky-600 dark:text-sky-400">
+                              {c.condIn.toFixed(3)}
                             </td>
-                            <td className="py-2 px-2.5 text-center font-sans">
-                              {isNonPhysical ? (
-                                <span className="text-amber-600 dark:text-amber-400 font-bold">Review</span>
-                              ) : isExhausted ? (
-                                <span className="text-rose-600 dark:text-rose-400 font-bold">
-                                  {isTh ? 'ทะลุขีดจำกัด (100%)' : 'Breakthrough'}
-                                </span>
-                              ) : isStop98 ? (
-                                <span className="text-rose-600 dark:text-rose-400 font-bold">
-                                  {isTh ? 'หยุดเดินระบบ / ฟื้นฟู (≥98%)' : 'STOP / Regen (≥98%)'}
-                                </span>
-                              ) : isWarn95 ? (
-                                <span className="text-amber-500 font-bold">
-                                  {isTh ? 'แจ้งเตือนระบบ (≥95%)' : 'Warning (≥95%)'}
-                                </span>
-                              ) : isMaxSafeStep ? (
-                                <span className="text-emerald-600 dark:text-emerald-400 font-bold">
-                                  {isTh ? 'รอบสูงสุดก่อนถึง 98%' : 'Max Safe (<98%)'}
-                                </span>
-                              ) : (
-                                <span className="text-emerald-600 dark:text-emerald-400">
-                                  {isTh ? 'ปกติ (<95%)' : 'Normal (<95%)'}
-                                </span>
-                              )}
-                            </td>
-                          </>
-                        )}
-
-                        {tableTab === 'stats' && (
-                          <>
-                            <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 bg-[var(--panel)]">
-                              {c.step}
-                            </td>
-                            <td className="py-2 px-2.5 font-sans font-medium">{c.label}</td>
-                            <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">{c.cycleEnd.toFixed(2)}</td>
-                            <td className="py-2 px-2.5 text-right">{c.distance.toFixed(2)}</td>
-                            <td className="py-2 px-2.5 text-right">
-                              +{(statRow?.deltaCombinedPct ?? 0).toFixed(3)}%
-                            </td>
-                            <td className="py-2 px-2.5 text-right text-[var(--ink-soft)]">
-                              {(statRow?.stepRatePctPerM3 ?? 0).toFixed(4)}
-                            </td>
-                            <td className="py-2 px-2.5 text-right font-bold">{c.combinedPercentLoad.toFixed(3)}%</td>
-                            <td className="py-2 px-2.5 text-right text-[var(--ink-soft)]">
-                              {(statRow?.zScore98 ?? 0) >= 0 ? `+${(statRow?.zScore98 ?? 0).toFixed(2)}` : (statRow?.zScore98 ?? 0).toFixed(2)}
-                            </td>
-                            <td className="py-2 px-2.5 text-right font-bold text-amber-500">
-                              {(statRow?.probReach98 ?? 0).toFixed(2)}%
-                            </td>
-                            <td className="py-2 px-2.5 text-center font-sans">
-                              {isExhausted || isStop98 ? (
-                                <span className="text-rose-600 dark:text-rose-400 font-bold">
-                                  {isTh ? 'หยุดระบบเพื่อ Regeneration ทันที (≥98%)' : 'Stop Mixed Bed & Regenerate (≥98%)'}
-                                </span>
-                              ) : isWarn95 ? (
-                                <span className="text-amber-500 font-bold">
-                                  {isTh ? 'แจ้งเตือน: เตรียมหยุดเดินระบบ (≥95%)' : 'Warning: Prepare System Stop (≥95%)'}
-                                </span>
-                              ) : (
-                                <span className="text-emerald-600 dark:text-emerald-400">
-                                  {isTh ? 'เดินระบบปกติ (<95%)' : 'Normal Operation (<95%)'}
-                                </span>
-                              )}
-                            </td>
+                            <td className="py-2 px-2.5 text-right">{c.condOut.toFixed(3)}</td>
                           </>
                         )}
 
@@ -3028,7 +2905,6 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                             <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 bg-[var(--panel)]">
                               {c.step}
                             </td>
-                            <td className="py-2 px-2.5 font-sans font-medium">{c.label}</td>
                             <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">{c.cycleEnd.toFixed(2)}</td>
                             <td className="py-2 px-2.5 text-right text-[var(--ink-soft)]">{c.distance.toFixed(2)}</td>
                             <td className="py-2 px-2.5 text-right">{c.condIn.toFixed(3)}</td>
@@ -3043,43 +2919,41 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                           </>
                         )}
 
-                        {tableTab !== 'stats' && (
-                          <td className="py-2 px-2.5 text-right font-sans">
-                            <div className="inline-flex items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setEditingRowState({
-                                    target: 'workspace',
-                                    rowId: c.rowId,
-                                    label: c.label,
-                                    cycleEnd: c.cycleEnd.toString(),
-                                    condIn: c.condIn.toString(),
-                                    condOut: c.condOut.toString(),
-                                    silicaIn: c.silicaIn.toString(),
-                                    silicaOut: c.silicaOut.toString(),
-                                  });
-                                }}
-                                className="p-1 text-[var(--ink-soft)] hover:text-emerald-500 rounded cursor-pointer"
-                                title={isTh ? 'แก้ไข' : 'Edit'}
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteWorkspaceRow(c.rowId, c.label);
-                                }}
-                                className="p-1 text-[var(--ink-soft)] hover:text-rose-500 rounded cursor-pointer"
-                                title={isTh ? 'ลบ' : 'Delete'}
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </div>
-                          </td>
-                        )}
+                        <td className="py-2 px-2.5 text-right font-sans">
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setEditingRowState({
+                                  target: 'workspace',
+                                  rowId: c.rowId,
+                                  label: c.label,
+                                  cycleEnd: c.cycleEnd.toString(),
+                                  condIn: c.condIn.toString(),
+                                  condOut: c.condOut.toString(),
+                                  silicaIn: c.silicaIn.toString(),
+                                  silicaOut: c.silicaOut.toString(),
+                                });
+                              }}
+                              className="p-1 text-[var(--ink-soft)] hover:text-emerald-500 rounded cursor-pointer"
+                              title={isTh ? 'แก้ไข' : 'Edit'}
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteWorkspaceRow(c.rowId, c.label);
+                              }}
+                              className="p-1 text-[var(--ink-soft)] hover:text-rose-500 rounded cursor-pointer"
+                              title={isTh ? 'ลบ' : 'Delete'}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -3090,24 +2964,24 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
         </div>
       )}
 
-      {/* 4. BOTTOM SECTION: Alert Banner + 5 KPI Cards (Current Water | 95% Yellow Warning | 98% Red Cutoff | % Load | Ion Load) + Line Chart (Shown only when user inputs data) */}
-      {hasCycleData && plantSummary && statisticalAnalysis && (
+      {/* 4. BOTTOM SECTION: Alert Banner + 5 KPI Cards (Current Water | 90% Yellow Warning | 95% Red Stop | % Load | Ion Load) + Line Chart (Shown only after rows are added) */}
+      {hasCycleData && plantSummary && thresholdAnalysis && (
         <div className="space-y-4">
-          {/* Operational Control Alert Banner (95% Yellow Warning & 98% Red Stop Mixed Bed for Regeneration) */}
+          {/* Operational Control Alert Banner (90% Yellow Warning & 95% Red Stop Mixed Bed for Regeneration) */}
           <div
             className={`p-4 rounded-2xl border flex flex-col md:flex-row md:items-center justify-between gap-3 ${
-              statisticalAnalysis.currentZone === 'breakthrough' || statisticalAnalysis.currentZone === 'stop98'
+              thresholdAnalysis.currentZone === 'breakthrough' || thresholdAnalysis.currentZone === 'stop95'
                 ? 'bg-rose-500/10 border-rose-500/40 text-rose-700 dark:text-rose-300'
-                : statisticalAnalysis.currentZone === 'warn95'
+                : thresholdAnalysis.currentZone === 'warn90'
                 ? 'bg-amber-500/15 border-amber-500/40 text-amber-700 dark:text-amber-300'
                 : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300'
             }`}
           >
             <div className="flex items-start gap-3">
               <div className="p-2 rounded-xl bg-black/5 dark:bg-white/5 shrink-0 mt-0.5">
-                {statisticalAnalysis.currentZone === 'breakthrough' || statisticalAnalysis.currentZone === 'stop98' ? (
+                {thresholdAnalysis.currentZone === 'breakthrough' || thresholdAnalysis.currentZone === 'stop95' ? (
                   <OctagonAlert className="w-5 h-5 text-rose-500" />
-                ) : statisticalAnalysis.currentZone === 'warn95' ? (
+                ) : thresholdAnalysis.currentZone === 'warn90' ? (
                   <BellRing className="w-5 h-5 text-amber-500" />
                 ) : (
                   <ShieldCheck className="w-5 h-5 text-emerald-500" />
@@ -3115,31 +2989,31 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
               </div>
               <div className="space-y-1">
                 <div className="text-xs sm:text-sm font-bold">
-                  {statisticalAnalysis.currentZone === 'breakthrough' || statisticalAnalysis.currentZone === 'stop98'
+                  {thresholdAnalysis.currentZone === 'breakthrough' || thresholdAnalysis.currentZone === 'stop95'
                     ? isTh
-                      ? `แจ้งเตือนตัดรอบระบบ (Cutoff ≥ 98%): แนะนำให้หยุดเดินระบบ Mixed Bed ทันทีเพื่อทำการฟื้นฟูเรซิน (Regeneration)`
-                      : `System Cutoff Reached (≥ 98%): Stop Mixed Bed System Immediately for Resin Regeneration`
-                    : statisticalAnalysis.currentZone === 'warn95'
+                      ? `ถึงจุดหยุดระบบ 95% (≥ 95%): แนะนำให้หยุดเดินระบบ Mixed Bed ทันทีเพื่อทำการฟื้นฟูเรซิน (Regeneration)`
+                      : `System Stop Reached (≥ 95%): Stop Mixed Bed System Immediately for Resin Regeneration`
+                    : thresholdAnalysis.currentZone === 'warn90'
                     ? isTh
-                      ? `แจ้งเตือนเฝ้าระวัง (≥ 95%): เรซินใกล้ถึงขีดจำกัด เตรียมสลับ Train และพร้อมหยุดเดินระบบที่จุดตัด 98%`
-                      : `System Warning (≥ 95%): Approaching 98% Cutoff — Prepare to Stop System for Regeneration`
+                      ? `จุดแจ้งเตือนระบบ 90% (≥ 90%): เรซินใกล้ถึงขีดจำกัด เตรียมสลับ Train และพร้อมหยุดเดินระบบที่จุดหยุดระบบ 95%`
+                      : `System Warning (≥ 90%): Approaching 95% Stop — Prepare to Stop System for Regeneration`
                     : isTh
-                    ? `สถานะเดินระบบปกติ (< 95%): ยังไม่ถึงจุดแจ้งเตือน 95% (${statisticalAnalysis.checkpoint95.targetMol.toFixed(2)} mol) และจุดตัดรอบ 98% (${statisticalAnalysis.checkpoint98.targetMol.toFixed(2)} mol)`
-                    : `Normal Operation (< 95%): Within 95% Warning (${statisticalAnalysis.checkpoint95.targetMol.toFixed(2)} mol) & 98% Cutoff (${statisticalAnalysis.checkpoint98.targetMol.toFixed(2)} mol)`}
+                    ? `สถานะเดินระบบปกติ (< 90%): ยังไม่ถึงจุดแจ้งเตือนระบบ 90% (${thresholdAnalysis.checkpoint90.targetMol.toFixed(2)} mol) และจุดหยุดระบบ 95% (${thresholdAnalysis.checkpoint95.targetMol.toFixed(2)} mol)`
+                    : `Normal Operation (< 90%): Within 90% Warning (${thresholdAnalysis.checkpoint90.targetMol.toFixed(2)} mol) & 95% System Stop (${thresholdAnalysis.checkpoint95.targetMol.toFixed(2)} mol)`}
                 </div>
                 <div className="text-xs opacity-90">
                   {plantSummary.maxSafeRowWithin98 ? (
                     isTh ? (
                       <>
-                        จุดแจ้งเตือน 95% ={' '}
+                        จุดแจ้งเตือนระบบ 90% ={' '}
                         <strong className="text-amber-500">
-                          {statisticalAnalysis.checkpoint95.interpolatedVolume.toLocaleString('en-US', {
+                          {thresholdAnalysis.checkpoint90.interpolatedVolume.toLocaleString('en-US', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}{' '}
                           m³
                         </strong>{' '}
-                        · จุดตัดรอบ 98% ={' '}
+                        · จุดหยุดระบบ 95% ={' '}
                         <strong className="text-rose-500">
                           {plantSummary.predictedCutoffVolume.toLocaleString('en-US', {
                             minimumFractionDigits: 2,
@@ -3147,7 +3021,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                           })}{' '}
                           m³
                         </strong>{' '}
-                        (ผลิตได้สูงสุดก่อนตัดรอบ <strong>{plantSummary.maxSafeRowWithin98.step} Cycle</strong> ·{' '}
+                        (ผลิตได้สูงสุดก่อนหยุดระบบ <strong>{plantSummary.maxSafeRowWithin98.step} Cycle</strong> ·{' '}
                         <strong>
                           {plantSummary.maxSafeRowWithin98.cycleEnd.toLocaleString('en-US', {
                             minimumFractionDigits: 2,
@@ -3159,15 +3033,15 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       </>
                     ) : (
                       <>
-                        95% Warning:{' '}
+                        90% System Warning:{' '}
                         <strong className="text-amber-500">
-                          {statisticalAnalysis.checkpoint95.interpolatedVolume.toLocaleString('en-US', {
+                          {thresholdAnalysis.checkpoint90.interpolatedVolume.toLocaleString('en-US', {
                             minimumFractionDigits: 2,
                             maximumFractionDigits: 2,
                           })}{' '}
                           m³
                         </strong>{' '}
-                        · 98% Cutoff:{' '}
+                        · 95% System Stop:{' '}
                         <strong className="text-rose-500">
                           {plantSummary.predictedCutoffVolume.toLocaleString('en-US', {
                             minimumFractionDigits: 2,
@@ -3180,8 +3054,8 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                   ) : (
                     <span>
                       {isTh
-                        ? `คาดการณ์จุดแจ้งเตือน 95%: ${statisticalAnalysis.checkpoint95.interpolatedVolume.toFixed(2)} m³ · จุดตัดรอบ 98%: ${plantSummary.predictedCutoffVolume.toFixed(2)} m³`
-                        : `Predicted 95% Warning: ${statisticalAnalysis.checkpoint95.interpolatedVolume.toFixed(2)} m³ · 98% Cutoff: ${plantSummary.predictedCutoffVolume.toFixed(2)} m³`}
+                        ? `คาดการณ์จุดแจ้งเตือนระบบ 90%: ${thresholdAnalysis.checkpoint90.interpolatedVolume.toFixed(2)} m³ · จุดหยุดระบบ 95%: ${plantSummary.predictedCutoffVolume.toFixed(2)} m³`
+                        : `Predicted 90% Warning: ${thresholdAnalysis.checkpoint90.interpolatedVolume.toFixed(2)} m³ · 95% System Stop: ${plantSummary.predictedCutoffVolume.toFixed(2)} m³`}
                     </span>
                   )}
                 </div>
@@ -3191,18 +3065,18 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
             <div className="flex items-center gap-2 shrink-0 font-mono text-xs font-bold px-3 py-1.5 rounded-xl bg-[var(--panel)] border border-[var(--line)] text-[var(--ink)] self-start md:self-center">
               <span>Load: {plantSummary.currentCombinedPercent.toFixed(2)}%</span>
               <span className="text-[var(--ink-soft)]">|</span>
-              <span className="text-amber-500">95%: {statisticalAnalysis.checkpoint95.interpolatedVolume.toFixed(1)} m³</span>
+              <span className="text-amber-500">90%: {thresholdAnalysis.checkpoint90.interpolatedVolume.toFixed(1)} m³</span>
               <span className="text-[var(--ink-soft)]">|</span>
-              <span className="text-rose-500">98%: {plantSummary.predictedCutoffVolume.toFixed(1)} m³</span>
+              <span className="text-rose-500">95%: {plantSummary.predictedCutoffVolume.toFixed(1)} m³</span>
             </div>
           </div>
 
-          {/* 5 Balanced KPI Summary Cards: [1. ปริมาณน้ำ ณ ปัจจุบัน (Green)] -> [2. จุดเตือนระบบ 95% (Yellow)] -> [3. จุดตัดระบบ 98% (Red)] -> [4. % Load] -> [5. Ion Load] */}
+          {/* 5 Balanced KPI Summary Cards: [1. ปริมาณน้ำ ณ ปัจจุบัน (Green)] -> [2. จุดแจ้งเตือนระบบ 90% (Yellow)] -> [3. จุดหยุดระบบ 95% (Red)] -> [4. % Load] -> [5. Ion Load] */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             {/* Card 1: Current Water Output (Green) */}
             <div className="p-3.5 sm:p-4 rounded-xl bg-[var(--panel)] border border-emerald-500/30 space-y-1">
-              <div className="text-xs text-[var(--ink-soft)] flex items-center justify-between gap-1">
-                <span className="truncate font-semibold text-[var(--ink)]">
+              <div className="text-xs sm:text-[13px] text-[var(--ink)] flex items-center justify-between gap-1">
+                <span className="truncate font-semibold">
                   {isTh ? 'ปริมาตรน้ำที่ผลิตได้ ณ ปัจจุบัน' : 'Current Water Output'}
                 </span>
                 <Droplets className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
@@ -3214,10 +3088,10 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 })}{' '}
                 <span className="text-xs font-normal text-[var(--ink-soft)]">m³</span>
               </div>
-              <div className="text-[11px] font-mono tabular-nums text-[var(--ink-soft)] truncate">
+              <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)] truncate">
                 {plantSummary.maxSafeRowWithin98
                   ? isTh
-                    ? `สูงสุดก่อนตัดรอบ: ${plantSummary.maxSafeRowWithin98.cycleEnd.toFixed(2)} m³ (${plantSummary.maxSafeRowWithin98.step} รอบ)`
+                    ? `สูงสุดก่อนหยุดระบบ: ${plantSummary.maxSafeRowWithin98.cycleEnd.toFixed(2)} m³ (${plantSummary.maxSafeRowWithin98.step} รอบ)`
                     : `Max safe: ${plantSummary.maxSafeRowWithin98.cycleEnd.toFixed(2)} m³ (${plantSummary.maxSafeRowWithin98.step} steps)`
                   : isTh
                   ? `คาดการณ์ผลิตได้ ${plantSummary.predictedTotalCycleCount98} Cycle`
@@ -3225,34 +3099,34 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
               </div>
             </div>
 
-            {/* Card 2 (Inserted between Current Water & 98% Red Cutoff): 95% Warning Point (Yellow) */}
+            {/* Card 2: 90% System Warning Point (Yellow) */}
             <div className="p-3.5 sm:p-4 rounded-xl bg-amber-500/[0.06] border border-amber-500/40 space-y-1">
-              <div className="text-xs text-amber-600 dark:text-amber-400 font-bold flex items-center justify-between gap-1">
-                <span className="truncate">{isTh ? 'จุดแจ้งเตือนระบบ (95%)' : '95% Warning Point'}</span>
+              <div className="text-xs sm:text-[13px] text-amber-600 dark:text-amber-400 font-bold flex items-center justify-between gap-1">
+                <span className="truncate">{isTh ? 'จุดแจ้งเตือนระบบ 90%' : '90% System Warning'}</span>
                 <BellRing className="w-3.5 h-3.5 text-amber-500 shrink-0" />
               </div>
               <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-amber-500 dark:text-amber-400 whitespace-nowrap">
-                {statisticalAnalysis.checkpoint95.interpolatedVolume.toLocaleString('en-US', {
+                {thresholdAnalysis.checkpoint90.interpolatedVolume.toLocaleString('en-US', {
                   minimumFractionDigits: 2,
                   maximumFractionDigits: 2,
                 })}{' '}
                 <span className="text-xs font-normal text-[var(--ink-soft)]">m³</span>
               </div>
-              <div className="text-[11px] font-mono tabular-nums text-[var(--ink-soft)] truncate">
-                {statisticalAnalysis.checkpoint95.firstReachedRow
+              <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)] truncate">
+                {thresholdAnalysis.checkpoint90.firstReachedRow
                   ? isTh
-                    ? `ถึงเกณฑ์ที่ รอบที่ ${statisticalAnalysis.checkpoint95.firstReachedRow.step} (${statisticalAnalysis.checkpoint95.firstReachedRow.cycleEnd.toFixed(2)} m³)`
-                    : `Reached at Step #${statisticalAnalysis.checkpoint95.firstReachedRow.step}`
+                    ? `ถึงเกณฑ์ที่ รอบที่ ${thresholdAnalysis.checkpoint90.firstReachedRow.step} (${thresholdAnalysis.checkpoint90.firstReachedRow.cycleEnd.toFixed(2)} m³)`
+                    : `Reached at Step #${thresholdAnalysis.checkpoint90.firstReachedRow.step}`
                   : isTh
-                  ? `อีก ${statisticalAnalysis.checkpoint95.remainingVolume.toFixed(2)} m³ ถึงจุดเตือน (${statisticalAnalysis.checkpoint95.targetMol.toFixed(2)} mol)`
-                  : `Rem. ${statisticalAnalysis.checkpoint95.remainingVolume.toFixed(2)} m³ (${statisticalAnalysis.checkpoint95.targetMol.toFixed(2)} mol)`}
+                  ? `อีก ${thresholdAnalysis.checkpoint90.remainingVolume.toFixed(2)} m³ ถึงจุดเตือน (${thresholdAnalysis.checkpoint90.targetMol.toFixed(2)} mol)`
+                  : `Rem. ${thresholdAnalysis.checkpoint90.remainingVolume.toFixed(2)} m³ (${thresholdAnalysis.checkpoint90.targetMol.toFixed(2)} mol)`}
               </div>
             </div>
 
-            {/* Card 3: Exact 98% Cut-off Point (Red) */}
+            {/* Card 3: 95% System Stop Point (Red) */}
             <div className="p-3.5 sm:p-4 rounded-xl bg-rose-500/[0.06] border border-rose-500/40 space-y-1">
-              <div className="text-xs text-rose-600 dark:text-rose-400 font-bold flex items-center justify-between gap-1">
-                <span className="truncate">{isTh ? 'จุดตัดรอบหยุดระบบ (98%)' : '98% Cutoff Volume'}</span>
+              <div className="text-xs sm:text-[13px] text-rose-600 dark:text-rose-400 font-bold flex items-center justify-between gap-1">
+                <span className="truncate">{isTh ? 'จุดหยุดระบบ 95%' : '95% System Stop'}</span>
                 <OctagonAlert className="w-3.5 h-3.5 text-rose-500 shrink-0" />
               </div>
               <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400 whitespace-nowrap">
@@ -3262,24 +3136,24 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 })}{' '}
                 <span className="text-xs font-normal text-[var(--ink-soft)]">m³</span>
               </div>
-              <div className="text-[11px] font-mono tabular-nums text-[var(--ink-soft)] truncate">
+              <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)] truncate">
                 {plantSummary.firstCutoffRowAbove98
                   ? isTh
                     ? `ถึงเกณฑ์ที่ รอบที่ ${plantSummary.firstCutoffRowAbove98.step} (${plantSummary.firstCutoffRowAbove98.cycleEnd.toFixed(2)} m³)`
                     : `Reached at Step #${plantSummary.firstCutoffRowAbove98.step} (${plantSummary.firstCutoffRowAbove98.cycleEnd.toFixed(2)} m³)`
                   : isTh
-                  ? `อีก ${plantSummary.remainingVolumeTo98.toFixed(2)} m³ ก่อนตัดรอบ (${statisticalAnalysis.checkpoint98.targetMol.toFixed(2)} mol)`
-                  : `Rem. ${plantSummary.remainingVolumeTo98.toFixed(2)} m³ (${statisticalAnalysis.checkpoint98.targetMol.toFixed(2)} mol)`}
+                  ? `อีก ${plantSummary.remainingVolumeTo98.toFixed(2)} m³ ก่อนหยุดระบบ (${thresholdAnalysis.checkpoint95.targetMol.toFixed(2)} mol)`
+                  : `Rem. ${plantSummary.remainingVolumeTo98.toFixed(2)} m³ (${thresholdAnalysis.checkpoint95.targetMol.toFixed(2)} mol)`}
               </div>
             </div>
 
             {/* Card 4: Percent Load on Resin */}
             <div className="p-3.5 sm:p-4 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-1">
-              <div className="text-xs text-[var(--ink-soft)] flex items-center justify-between gap-1">
+              <div className="text-xs sm:text-[13px] font-semibold text-[var(--ink)] flex items-center justify-between gap-1">
                 <span className="truncate">Percent Load on Resin</span>
-                {plantSummary.currentCombinedPercent >= 98 || plantSummary.currentSilicaPercent >= 98 ? (
+                {plantSummary.currentCombinedPercent >= 95 || plantSummary.currentSilicaPercent >= 95 ? (
                   <ShieldAlert className="w-3.5 h-3.5 text-rose-500 shrink-0" />
-                ) : plantSummary.currentCombinedPercent >= 95 || plantSummary.currentSilicaPercent >= 95 ? (
+                ) : plantSummary.currentCombinedPercent >= 90 || plantSummary.currentSilicaPercent >= 90 ? (
                   <BellRing className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                 ) : (
                   <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
@@ -3287,23 +3161,23 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
               </div>
               <div
                 className={`text-lg sm:text-xl font-bold font-mono tabular-nums whitespace-nowrap ${
-                  plantSummary.currentCombinedPercent >= 98
+                  plantSummary.currentCombinedPercent >= 95
                     ? 'text-rose-600 dark:text-rose-400'
-                    : plantSummary.currentCombinedPercent >= 95
+                    : plantSummary.currentCombinedPercent >= 90
                     ? 'text-amber-500 dark:text-amber-400'
                     : 'text-emerald-600 dark:text-emerald-400'
                 }`}
               >
                 {plantSummary.currentCombinedPercent.toFixed(3)}%
               </div>
-              <div className="text-[11px] font-mono tabular-nums text-[var(--ink-soft)] truncate">
+              <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)] truncate">
                 Silica: <strong className="text-indigo-600 dark:text-indigo-400">{plantSummary.currentSilicaPercent.toFixed(2)}%</strong> · Cond: {plantSummary.currentCondPercent.toFixed(2)}%
               </div>
             </div>
 
             {/* Card 5: Combined Ion Load */}
             <div className="p-3.5 sm:p-4 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-1 sm:col-span-2 lg:col-span-1">
-              <div className="text-xs text-[var(--ink-soft)] flex items-center justify-between gap-1">
+              <div className="text-xs sm:text-[13px] font-semibold text-[var(--ink)] flex items-center justify-between gap-1">
                 <span className="truncate">{isTh ? 'Ion Load สะสมรวม' : 'Cumulative Ion Load'}</span>
                 <Gauge className="w-3.5 h-3.5 text-sky-500 shrink-0" />
               </div>
@@ -3311,150 +3185,16 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 {plantSummary.currentCombinedIonLoad.toFixed(3)}{' '}
                 <span className="text-xs font-normal text-[var(--ink-soft)]">/ {totalCap.toFixed(1)} mol</span>
               </div>
-              <div className="text-[11px] font-mono tabular-nums text-[var(--ink-soft)] truncate">
+              <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)] truncate">
                 Cond {plantSummary.currentCondIonLoad.toFixed(2)} · Si {plantSummary.currentSilicaIonLoad.toFixed(2)} mol
               </div>
             </div>
           </div>
 
-          {/* Collapsible Statistical Analysis & Probability Distribution Section (Hidden by default on first open) */}
-          <div className="rounded-2xl bg-[var(--panel)] border border-[var(--line)] overflow-hidden">
-            <div className="px-4 sm:px-5 py-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs sm:text-sm font-bold text-[var(--ink)]">
-                <Sigma className="w-4 h-4 text-sky-500 shrink-0" />
-                <span>
-                  {isTh
-                    ? 'การวิเคราะห์เชิงสถิติ และการแจกแจงความน่าจะเป็น (Normal Distribution)'
-                    : 'Statistical Analysis & Normal Probability Distribution'}
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setShowStatisticalDashboard((prev) => !prev)}
-                className="text-xs text-[var(--accent)] font-semibold flex items-center gap-1 cursor-pointer px-3 py-1.5 rounded-xl bg-[var(--bg)] border border-[var(--line)] hover:bg-[var(--sidebar-hover)] transition-colors whitespace-nowrap"
-              >
-                <span>
-                  {showStatisticalDashboard
-                    ? isTh
-                      ? 'ซ่อนการวิเคราะห์เชิงสถิติ'
-                      : 'Hide Statistical Analysis'
-                    : isTh
-                    ? 'แสดงการวิเคราะห์เชิงสถิติ & ความน่าจะเป็น'
-                    : 'Show Statistical Analysis & Probability'}
-                </span>
-                {showStatisticalDashboard ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
-            </div>
-
-            <AnimatePresence initial={false}>
-              {showStatisticalDashboard && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-                  className="overflow-hidden"
-                >
-                  <div className="p-4 sm:p-5 border-t border-[var(--line)] bg-[var(--bg)]/40 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs font-mono tabular-nums">
-                    {/* 95% Warning Reference */}
-                    <div className="p-3 rounded-xl bg-amber-500/[0.08] border border-amber-500/35 space-y-1">
-                      <div className="flex items-center justify-between text-xs font-sans font-bold text-amber-600 dark:text-amber-400">
-                        <span>{isTh ? 'จุดแจ้งเตือนระบบ 95%' : 'System Warning 95%'}</span>
-                        <span className="font-mono text-[11px]">{statisticalAnalysis.checkpoint95.targetMol.toFixed(2)} mol</span>
-                      </div>
-                      <div className="text-sm sm:text-base font-bold text-amber-500 dark:text-amber-400 whitespace-nowrap">
-                        {statisticalAnalysis.checkpoint95.interpolatedVolume.toLocaleString('en-US', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}{' '}
-                        <span className="text-xs font-normal text-[var(--ink-soft)]">m³</span>
-                      </div>
-                      <div className="text-[11px] font-sans text-[var(--ink-soft)] truncate">
-                        {isTh
-                          ? `คาดการณ์ ~${statisticalAnalysis.checkpoint95.safeCycleCount} รอบ ถึงจุดเตือน`
-                          : `Est. ~${statisticalAnalysis.checkpoint95.safeCycleCount} cycles to 95%`}
-                      </div>
-                    </div>
-
-                    {/* 98% System Cutoff Reference */}
-                    <div className="p-3 rounded-xl bg-rose-500/[0.08] border border-rose-500/35 space-y-1">
-                      <div className="flex items-center justify-between text-xs font-sans font-bold text-rose-600 dark:text-rose-400">
-                        <span>{isTh ? 'จุดตัดรอบระบบ 98%' : 'System Cutoff 98%'}</span>
-                        <span className="font-mono text-[11px]">{statisticalAnalysis.checkpoint98.targetMol.toFixed(2)} mol</span>
-                      </div>
-                      <div className="text-sm sm:text-base font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap">
-                        {statisticalAnalysis.checkpoint98.interpolatedVolume.toLocaleString('en-US', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}{' '}
-                        <span className="text-xs font-normal text-[var(--ink-soft)]">m³</span>
-                      </div>
-                      <div className="text-[11px] font-sans text-[var(--ink-soft)] truncate">
-                        {isTh
-                          ? `ผลิตได้ปลอดภัย ${statisticalAnalysis.checkpoint98.safeCycleCount} รอบ ก่อนหยุดฟื้นฟู`
-                          : `${statisticalAnalysis.checkpoint98.safeCycleCount} safe cycles before regen`}
-                      </div>
-                    </div>
-
-                    {/* Mean & SD Water per Cycle */}
-                    <div className="p-3 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-1">
-                      <div className="text-[11px] font-sans text-[var(--ink-soft)] truncate">
-                        {isTh ? 'ปริมาณน้ำเฉลี่ยต่อรอบ (μ ± σ)' : 'Water / Cycle (μ ± σ)'}
-                      </div>
-                      <div className="text-sm sm:text-base font-bold text-[var(--ink)] whitespace-nowrap">
-                        {statisticalAnalysis.meanDeltaV.toFixed(2)} ± {statisticalAnalysis.sdDeltaV.toFixed(2)} m³
-                      </div>
-                      <div className="text-[11px] font-sans text-[var(--ink-soft)] truncate">
-                        {isTh ? `จากข้อมูล ${statisticalAnalysis.n} รอบ` : `Across ${statisticalAnalysis.n} cycles`}
-                      </div>
-                    </div>
-
-                    {/* Mean & SD % Load per Cycle */}
-                    <div className="p-3 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-1">
-                      <div className="text-[11px] font-sans text-[var(--ink-soft)] truncate">
-                        {isTh ? '% Load เฉลี่ยต่อรอบ (μ ± σ)' : '% Load / Cycle (μ ± σ)'}
-                      </div>
-                      <div className="text-sm sm:text-base font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
-                        {statisticalAnalysis.meanDeltaPct.toFixed(2)}% ± {statisticalAnalysis.sdDeltaPct.toFixed(2)}%
-                      </div>
-                      <div className="text-[11px] font-sans text-[var(--ink-soft)] truncate">
-                        {isTh
-                          ? `อัตราเฉลี่ย ${statisticalAnalysis.meanRatePctPerM3.toFixed(4)} %/m³`
-                          : `Avg rate ${statisticalAnalysis.meanRatePctPerM3.toFixed(4)} %/m³`}
-                      </div>
-                    </div>
-
-                    {/* 95% Confidence Interval at 98% Cutoff */}
-                    <div className="p-3 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-1 sm:col-span-2 lg:col-span-1">
-                      <div className="text-[11px] font-sans text-[var(--ink-soft)] truncate">
-                        {isTh ? 'ช่วงความเชื่อมั่น 95% ที่จุดตัดรอบ 98%' : '95% CI Water at 98% Cutoff'}
-                      </div>
-                      <div className="text-sm sm:text-base font-bold text-sky-600 dark:text-sky-400 whitespace-nowrap">
-                        {statisticalAnalysis.ci95LowVolume.toFixed(0)}–{statisticalAnalysis.ci95HighVolume.toFixed(0)} m³
-                      </div>
-                      <div className="text-[11px] font-sans text-[var(--ink-soft)] truncate">
-                        {isTh
-                          ? `ความน่าจะเป็นรอบล่าสุด P(≥98%) = ${(
-                              statisticalAnalysis.cycleProbabilities[statisticalAnalysis.cycleProbabilities.length - 1]
-                                ?.probReach98 ?? 0
-                            ).toFixed(2)}%`
-                          : `Current P(≥98%) = ${(
-                              statisticalAnalysis.cycleProbabilities[statisticalAnalysis.cycleProbabilities.length - 1]
-                                ?.probReach98 ?? 0
-                            ).toFixed(2)}%`}
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
           {/* Animated Resin Capacity Progress Bars + Enlarged Line Chart */}
           {chartGeometry && (
             <div className="p-4 sm:p-5 rounded-2xl bg-[var(--panel)] border border-[var(--line)] space-y-4">
-              {/* Dual Progress Bars with 95% Yellow Warning & 98% Red Cutoff Markers */}
+              {/* Dual Progress Bars with 90% Yellow Warning & 95% Red Stop Markers */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-1.5">
                   <div className="flex items-center justify-between text-xs font-mono tabular-nums">
@@ -3471,15 +3211,15 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       animate={{ width: `${Math.min(100, Math.max(0, plantSummary.currentCombinedPercent))}%` }}
                       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                       className={`h-full rounded-full ${
-                        plantSummary.currentCombinedPercent >= 98
+                        plantSummary.currentCombinedPercent >= 95
                           ? 'bg-rose-500'
-                          : plantSummary.currentCombinedPercent >= 95
+                          : plantSummary.currentCombinedPercent >= 90
                           ? 'bg-amber-500'
                           : 'bg-emerald-500'
                       }`}
                     />
-                    <div className="absolute top-0 bottom-0 w-0.5 bg-amber-400 z-10" style={{ left: '95%' }} title="95% Warning" />
-                    <div className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-10" style={{ left: '98%' }} title="98% Cutoff" />
+                    <div className="absolute top-0 bottom-0 w-0.5 bg-amber-400 z-10" style={{ left: '90%' }} title="90% Warning" />
+                    <div className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-10" style={{ left: '95%' }} title="95% System Stop" />
                   </div>
                 </div>
 
@@ -3498,15 +3238,15 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       animate={{ width: `${Math.min(100, Math.max(0, plantSummary.currentSilicaPercent))}%` }}
                       transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                       className={`h-full rounded-full ${
-                        plantSummary.currentSilicaPercent >= 98
+                        plantSummary.currentSilicaPercent >= 95
                           ? 'bg-rose-500'
-                          : plantSummary.currentSilicaPercent >= 95
+                          : plantSummary.currentSilicaPercent >= 90
                           ? 'bg-amber-500'
                           : 'bg-indigo-500'
                       }`}
                     />
-                    <div className="absolute top-0 bottom-0 w-0.5 bg-amber-400 z-10" style={{ left: '95%' }} title="95% Warning" />
-                    <div className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-10" style={{ left: '98%' }} title="98% Cutoff" />
+                    <div className="absolute top-0 bottom-0 w-0.5 bg-amber-400 z-10" style={{ left: '90%' }} title="90% Warning" />
+                    <div className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-10" style={{ left: '95%' }} title="95% System Stop" />
                   </div>
                 </div>
               </div>
@@ -3527,11 +3267,11 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       <span>% Load Silica</span>
                     </span>
                     <span>
-                      {isTh ? 'จุดเตือน 95%: ' : '95% Warning: '}
-                      <strong className="text-amber-500">{statisticalAnalysis.checkpoint95.interpolatedVolume.toFixed(2)} m³</strong>
+                      {isTh ? 'จุดแจ้งเตือนระบบ 90%: ' : '90% Warning: '}
+                      <strong className="text-amber-500">{thresholdAnalysis.checkpoint90.interpolatedVolume.toFixed(2)} m³</strong>
                     </span>
                     <span>
-                      {isTh ? 'จุดตัดรอบ 98%: ' : '98% Cutoff: '}
+                      {isTh ? 'จุดหยุดระบบ 95%: ' : '95% Stop: '}
                       <strong className="text-rose-500">{plantSummary.predictedCutoffVolume.toFixed(2)} m³</strong>
                     </span>
                   </div>
@@ -3580,7 +3320,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                           x={x}
                           y={chartGeometry.H - chartGeometry.padB + 22}
                           textAnchor="middle"
-                          className="text-[11px] font-mono fill-[var(--ink-soft)]"
+                          className="text-xs font-mono fill-[var(--ink-soft)]"
                         >
                           {volTick.toLocaleString('en-US')}
                         </text>
@@ -3588,13 +3328,13 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                     );
                   })}
 
-                  {/* Horizontal Grid Lines & Non-Overlapping Y-Axis Ticks (0, 20, 40, 60, 80, 95, 98) */}
+                  {/* Horizontal Grid Lines & Non-Overlapping Y-Axis Ticks (0, 20, 40, 60, 80, 90, 95) */}
                   {chartGeometry.yTicks.map((pct) => {
                     const y = chartGeometry.yFor(pct);
-                    const is98 = pct === 98;
                     const is95 = pct === 95;
-                    // Offset 98% slightly upward and 95% slightly downward so their labels never collide
-                    const labelY = is98 ? y - 2 : is95 ? y + 9 : y + 4;
+                    const is90 = pct === 90;
+                    // Offset 95% slightly upward and 90% slightly downward so their labels never collide
+                    const labelY = is95 ? y - 1 : is90 ? y + 7 : y + 4;
                     return (
                       <g key={`ytick_${pct}`}>
                         <line
@@ -3602,18 +3342,18 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                           y1={y}
                           x2={chartGeometry.W - chartGeometry.padR}
                           y2={y}
-                          stroke={is98 ? '#f43f5e' : is95 ? '#f59e0b' : 'var(--line)'}
-                          strokeWidth={is98 ? '1.75' : is95 ? '1.4' : '1'}
-                          strokeDasharray={is98 || is95 ? '6 4' : '3 4'}
+                          stroke={is95 ? '#f43f5e' : is90 ? '#f59e0b' : 'var(--line)'}
+                          strokeWidth={is95 ? '1.75' : is90 ? '1.4' : '1'}
+                          strokeDasharray={is95 || is90 ? '6 4' : '3 4'}
                         />
                         <text
                           x={chartGeometry.padL - 10}
                           y={labelY}
                           textAnchor="end"
-                          className={`text-[11px] font-mono ${
-                            is98
+                          className={`text-xs font-mono ${
+                            is95
                               ? 'fill-rose-500 font-bold'
-                              : is95
+                              : is90
                               ? 'fill-amber-500 font-bold'
                               : 'fill-[var(--ink-soft)]'
                           }`}
@@ -3642,7 +3382,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                     strokeWidth="1.5"
                   />
 
-                  {/* Projected Line to 98% / 100% */}
+                  {/* Projected Line to 95% / 100% */}
                   {chartGeometry.forecastPolyline && (
                     <polyline
                       points={chartGeometry.forecastPolyline}
@@ -3702,9 +3442,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                           cy={chartGeometry.yFor(pt.pct)}
                           r={isSelected ? 5 : 4}
                           className={
-                            pt.pct >= 98
+                            pt.pct >= 95
                               ? 'fill-rose-500 stroke-white stroke-1'
-                              : pt.pct >= 95
+                              : pt.pct >= 90
                               ? 'fill-amber-500 stroke-white stroke-1'
                               : 'fill-emerald-500 stroke-white stroke-1'
                           }
@@ -3790,7 +3530,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                           <span className="font-normal text-xs text-[var(--ink-soft)]">({batch.rowCount} {isTh ? 'แถว' : 'rows'})</span>
                         </div>
                         <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)] truncate">
-                          Vol: {(batch.cycleEnd || 0).toFixed(2)} m³ · Load: {(batch.combinedPercentLoad || batch.percentLoad || 0).toFixed(2)}% · 98%: <strong className="text-[var(--accent)]">{batch.predictedCycle.toFixed(2)} m³</strong>
+                          Vol: {(batch.cycleEnd || 0).toFixed(2)} m³ · Load: {(batch.combinedPercentLoad || batch.percentLoad || 0).toFixed(2)}% · 95%: <strong className="text-[var(--accent)]">{batch.predictedCycle.toFixed(2)} m³</strong>
                         </div>
                       </div>
 
@@ -3877,7 +3617,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-bold text-[var(--ink)] block mb-1">
-                      Silica Inlet (ppb)
+                      Silica MB Inlet (ppb)
                     </label>
                     <input
                       type="number"
@@ -3890,7 +3630,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                   </div>
                   <div>
                     <label className="text-xs font-bold text-[var(--ink)] block mb-1">
-                      Silica Outlet (ppb)
+                      Silica MB Outlet (ppb)
                     </label>
                     <input
                       type="number"
@@ -3904,7 +3644,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="text-xs font-bold text-[var(--ink)] block mb-1">Cond Inlet (µS/cm)</label>
+                    <label className="text-xs font-bold text-[var(--ink)] block mb-1">
+                      Cond. MB Inlet (µS/cm)
+                    </label>
                     <input
                       type="number"
                       step="0.001"
@@ -3915,7 +3657,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-bold text-[var(--ink)] block mb-1">Cond Outlet (µS/cm)</label>
+                    <label className="text-xs font-bold text-[var(--ink)] block mb-1">
+                      Cond MB Outlet (µS/cm)
+                    </label>
                     <input
                       type="number"
                       step="0.001"

@@ -90,7 +90,7 @@ export interface CycleRowItem {
   totalCombinedIonLoad: number; // Ion Load Cond + Ion Load Silica (mol)
   combinedPercentLoad: number; // (totalCombinedIonLoad / 79.7) * 100
   percentLoad: number; // Active Percent Load on Resin (%)
-  predictedCycle: number; // Predicted 98% Cut-off Volume (m³)
+  predictedCycle: number; // Predicted 95% System Stop Volume (m³)
 }
 
 export interface CyclePredictionRecord {
@@ -155,13 +155,13 @@ export interface BatchCalculationResult {
   totalCombinedIonLoad: number;
   combinedPercentLoad: number;
   percentLoad: number;
-  predictedCycle: number; // Predicted 98% Cut-off Volume (m³)
+  predictedCycle: number; // Predicted 95% System Stop Volume (m³)
   predictedBreakthrough: number; // Predicted 100% Breakthrough Volume (m³)
-  predictedSilicaCutoffCycle: number; // Predicted 98% Cut-off Volume based on Silica (5.7 mol)
-  predictedCondCutoffCycle: number; // Predicted 98% Cut-off Volume based on Cond (74 mol)
-  predictedTotalCycleCount98: number; // Estimated number of Cycle steps at 98% cut-off
-  maxSafeRowWithin98: CycleRowItem | null; // Highest step still <= 98%
-  firstCutoffRowAbove98: CycleRowItem | null; // First step > 98% (or breakthrough)
+  predictedSilicaCutoffCycle: number; // Predicted 95% System Stop Volume based on Silica
+  predictedCondCutoffCycle: number; // Predicted 95% System Stop Volume based on Cond
+  predictedTotalCycleCount98: number; // Estimated number of Cycle steps at 95% system stop
+  maxSafeRowWithin98: CycleRowItem | null; // Highest step still <= 95%
+  firstCutoffRowAbove98: CycleRowItem | null; // First step > 95% (or breakthrough)
 }
 
 export function isNonPhysicalCycleRow(row: {
@@ -291,13 +291,13 @@ export function recalculateBatchRows(
     const silicaPercentLoad = (cumulativeSilicaLoad / sCap) * 100;
     const combinedPercentLoad = (totalCombinedIonLoad / totalCap) * 100;
 
-    // Step 6: Predict Cycle volume at 98% cut-off using Combined Ion Load (Cond + Silica) vs 79.7 mol
+    // Step 6: Predict Cycle volume at 95% system stop using Combined Ion Load (Cond + Silica)
     const avgCombinedRatePerM3 =
       cycleEnd > 0 && totalCombinedIonLoad > 0
         ? totalCombinedIonLoad / cycleEnd
         : Math.max(0, netCondConc + netSilicaConc);
     const predictedCycle =
-      avgCombinedRatePerM3 > 0 ? (totalCap * 0.98) / avgCombinedRatePerM3 : 1700;
+      avgCombinedRatePerM3 > 0 ? (totalCap * 0.95) / avgCombinedRatePerM3 : 1700;
 
     const cleanLabel =
       item.label && item.label.trim()
@@ -356,16 +356,16 @@ export function recalculateBatchRows(
   const overallCondRate =
     totalVol > 0 && lastRow.cumulativeIonLoad > 0 ? lastRow.cumulativeIonLoad / totalVol : 0;
 
-  // Predicted 98% Cut-off Volume (Combined Cond + Silica, Capacity = 74 + 5.7 = 79.7 mol)
-  let predictedCutoff98 = overallCombinedRate > 0 ? (totalCap * 0.98) / overallCombinedRate : 1700;
-  const idx98 = computedRows.findIndex((r) => r.combinedPercentLoad > 98);
-  if (idx98 > 0) {
-    const prev = computedRows[idx98 - 1];
-    const curr = computedRows[idx98];
+  // Predicted 95% System Stop Volume (Combined Cond + Silica)
+  let predictedStop95 = overallCombinedRate > 0 ? (totalCap * 0.95) / overallCombinedRate : 1700;
+  const idx95 = computedRows.findIndex((r) => r.combinedPercentLoad > 95);
+  if (idx95 > 0) {
+    const prev = computedRows[idx95 - 1];
+    const curr = computedRows[idx95];
     const deltaPct = curr.combinedPercentLoad - prev.combinedPercentLoad;
-    if (deltaPct > 0 && prev.combinedPercentLoad <= 98) {
-      const frac = (98 - prev.combinedPercentLoad) / deltaPct;
-      predictedCutoff98 = prev.cycleEnd + frac * (curr.cycleEnd - prev.cycleEnd);
+    if (deltaPct > 0 && prev.combinedPercentLoad <= 95) {
+      const frac = (95 - prev.combinedPercentLoad) / deltaPct;
+      predictedStop95 = prev.cycleEnd + frac * (curr.cycleEnd - prev.cycleEnd);
     }
   }
 
@@ -382,18 +382,18 @@ export function recalculateBatchRows(
   }
 
   const predictedSilicaCutoffCycle =
-    overallSilicaRate > 0 ? (sCap * 0.98) / overallSilicaRate : 1700;
+    overallSilicaRate > 0 ? (sCap * 0.95) / overallSilicaRate : 1700;
   const predictedCondCutoffCycle =
-    overallCondRate > 0 ? (cCap * 0.98) / overallCondRate : 1700;
+    overallCondRate > 0 ? (cCap * 0.95) / overallCondRate : 1700;
 
-  // Find maximum safe step still within <= 98% (both Combined and Silica) and first step exceeding 98%
+  // Find maximum safe step still within <= 95% (both Combined and Silica) and first step exceeding 95%
   const safeRows = computedRows.filter(
-    (r) => r.combinedPercentLoad <= 98 && r.silicaPercentLoad <= 98 && r.condOut < 0.1 && r.silicaOut < 10
+    (r) => r.combinedPercentLoad <= 95 && r.silicaPercentLoad <= 95 && r.condOut < 0.1 && r.silicaOut < 10
   );
   const maxSafeRowWithin98 = safeRows.length > 0 ? safeRows[safeRows.length - 1] : null;
   const firstCutoffRowAbove98 =
     computedRows.find(
-      (r) => r.combinedPercentLoad > 98 || r.silicaPercentLoad > 98 || r.condOut >= 0.1 || r.silicaOut >= 10
+      (r) => r.combinedPercentLoad > 95 || r.silicaPercentLoad > 95 || r.condOut >= 0.1 || r.silicaOut >= 10
     ) || null;
 
   const avgStepVol = totalVol > 0 ? totalVol / computedRows.length : 115;
@@ -402,7 +402,7 @@ export function recalculateBatchRows(
       ? maxSafeRowWithin98.step
       : 1
     : avgStepVol > 0
-    ? Math.max(computedRows.length, Math.floor(predictedCutoff98 / avgStepVol))
+    ? Math.max(computedRows.length, Math.floor(predictedStop95 / avgStepVol))
     : computedRows.length;
 
   return {
@@ -426,7 +426,7 @@ export function recalculateBatchRows(
     totalCombinedIonLoad: lastRow.totalCombinedIonLoad,
     combinedPercentLoad: lastRow.combinedPercentLoad,
     percentLoad: lastRow.combinedPercentLoad,
-    predictedCycle: Number(Math.max(0, predictedCutoff98).toFixed(3)),
+    predictedCycle: Number(Math.max(0, predictedStop95).toFixed(3)),
     predictedBreakthrough: Number(Math.max(0, predictedBreakthrough100).toFixed(3)),
     predictedSilicaCutoffCycle: Number(Math.max(0, predictedSilicaCutoffCycle).toFixed(3)),
     predictedCondCutoffCycle: Number(Math.max(0, predictedCondCutoffCycle).toFixed(3)),
@@ -818,11 +818,17 @@ function buildCycleFirestorePayload(
   },
   isUpdate: boolean = false
 ): Record<string, unknown> {
+  const safeNum = (v: unknown, fallback = 0): number => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const safeNonNeg = (v: unknown, fallback = 0): number => Math.max(0, safeNum(v, fallback));
+
   const payload: Record<string, unknown> = {
     userId,
-    conductivity: Math.max(0, Number(data.conductivity) || 0),
-    predictedCycle: Number(data.predictedCycle) || 0,
-    createdAt,
+    conductivity: safeNonNeg(data.conductivity, 0),
+    predictedCycle: safeNum(data.predictedCycle, 0),
+    createdAt: createdAt.slice(0, 64),
   };
   if (isUpdate) {
     payload.updatedAt = new Date().toISOString();
@@ -838,77 +844,78 @@ function buildCycleFirestorePayload(
   if (data.train && data.train.trim()) {
     payload.train = data.train.trim().slice(0, 32);
   }
-  if (data.resinCapacity !== undefined && data.resinCapacity > 0) {
-    payload.resinCapacity = Number(data.resinCapacity);
+  if (data.resinCapacity !== undefined && safeNum(data.resinCapacity) > 0) {
+    payload.resinCapacity = safeNum(data.resinCapacity);
   }
-  if (data.condCapacity !== undefined && data.condCapacity > 0) {
-    payload.condCapacity = Number(data.condCapacity);
+  if (data.condCapacity !== undefined && safeNum(data.condCapacity) > 0) {
+    payload.condCapacity = safeNum(data.condCapacity);
   }
-  if (data.silicaCapacity !== undefined && data.silicaCapacity > 0) {
-    payload.silicaCapacity = Number(data.silicaCapacity);
+  if (data.silicaCapacity !== undefined && safeNum(data.silicaCapacity) > 0) {
+    payload.silicaCapacity = safeNum(data.silicaCapacity);
   }
-  if (data.rowCount !== undefined && data.rowCount >= 0) {
-    payload.rowCount = Number(data.rowCount);
+  if (data.rowCount !== undefined && safeNum(data.rowCount) >= 0) {
+    payload.rowCount = safeNonNeg(data.rowCount, 0);
   }
   if (Array.isArray(data.rows)) {
     payload.rows = data.rows.slice(0, 500).map((r, idx) => ({
       rowId: String(r.rowId || `row_${idx + 1}`).slice(0, 128),
-      step: Number(r.step ?? idx + 1),
+      step: safeNum(r.step, idx + 1),
       label: String(r.label || `Step ${idx + 1}`).slice(0, 128),
-      cycleStart: Number(r.cycleStart) || 0,
-      cycleEnd: Number(r.cycleEnd) || 0,
-      distance: Number(r.distance) || 0,
-      condIn: Number(r.condIn) || 0,
-      condOut: Number(r.condOut) || 0,
-      concInMolL: Number(r.concInMolL) || 0,
-      concInMolM3: Number(r.concInMolM3) || 0,
-      concOutMolL: Number(r.concOutMolL) || 0,
-      concOutMolM3: Number(r.concOutMolM3) || 0,
-      ionsRemoved: Number(r.ionsRemoved) || 0,
-      cumulativeIonLoad: Number(r.cumulativeIonLoad) || 0,
-      condPercentLoad: Number(r.condPercentLoad) || 0,
-      silicaIn: Number(r.silicaIn ?? 185.3),
-      silicaOut: Number(r.silicaOut ?? 1.0),
-      silicaConcInMolL: Number(r.silicaConcInMolL) || 0,
-      silicaConcInMolM3: Number(r.silicaConcInMolM3) || 0,
-      silicaConcOutMolL: Number(r.silicaConcOutMolL) || 0,
-      silicaConcOutMolM3: Number(r.silicaConcOutMolM3) || 0,
-      silicaIonsRemoved: Number(r.silicaIonsRemoved) || 0,
-      cumulativeSilicaLoad: Number(r.cumulativeSilicaLoad) || 0,
-      stepSilicaPlusCondLoad: Number(r.stepSilicaPlusCondLoad) || 0,
-      silicaPercentLoad: Number(r.silicaPercentLoad) || 0,
-      totalCombinedIonLoad: Number(r.totalCombinedIonLoad) || 0,
-      combinedPercentLoad: Number(r.combinedPercentLoad) || 0,
-      percentLoad: Number(r.percentLoad) || 0,
-      predictedCycle: Number(r.predictedCycle) || 0,
+      cycleStart: safeNum(r.cycleStart, 0),
+      cycleEnd: safeNum(r.cycleEnd, 0),
+      distance: safeNum(r.distance, 0),
+      condIn: safeNum(r.condIn, 0),
+      condOut: safeNum(r.condOut, 0),
+      concInMolL: safeNum(r.concInMolL, 0),
+      concInMolM3: safeNum(r.concInMolM3, 0),
+      concOutMolL: safeNum(r.concOutMolL, 0),
+      concOutMolM3: safeNum(r.concOutMolM3, 0),
+      ionsRemoved: safeNum(r.ionsRemoved, 0),
+      cumulativeIonLoad: safeNum(r.cumulativeIonLoad, 0),
+      condPercentLoad: safeNum(r.condPercentLoad, 0),
+      silicaIn: safeNum(r.silicaIn, 185.3),
+      silicaOut: safeNum(r.silicaOut, 1.0),
+      silicaConcInMolL: safeNum(r.silicaConcInMolL, 0),
+      silicaConcInMolM3: safeNum(r.silicaConcInMolM3, 0),
+      silicaConcOutMolL: safeNum(r.silicaConcOutMolL, 0),
+      silicaConcOutMolM3: safeNum(r.silicaConcOutMolM3, 0),
+      silicaIonsRemoved: safeNum(r.silicaIonsRemoved, 0),
+      cumulativeSilicaLoad: safeNum(r.cumulativeSilicaLoad, 0),
+      stepSilicaPlusCondLoad: safeNum(r.stepSilicaPlusCondLoad, 0),
+      silicaPercentLoad: safeNum(r.silicaPercentLoad, 0),
+      totalCombinedIonLoad: safeNum(r.totalCombinedIonLoad, 0),
+      combinedPercentLoad: safeNum(r.combinedPercentLoad, 0),
+      percentLoad: safeNum(r.percentLoad, 0),
+      predictedCycle: safeNum(r.predictedCycle, 0),
     }));
     payload.rowCount = (payload.rows as unknown[]).length;
   }
 
-  if (data.condOut !== undefined) payload.condOut = Math.max(0, Number(data.condOut) || 0);
-  if (data.silica !== undefined) payload.silica = Number(data.silica) || 0;
-  if (data.silicaOut !== undefined) payload.silicaOut = Number(data.silicaOut) || 0;
-  if (data.cumulativeSilicaLoad !== undefined) payload.cumulativeSilicaLoad = Number(data.cumulativeSilicaLoad) || 0;
-  if (data.silicaPercentLoad !== undefined) payload.silicaPercentLoad = Number(data.silicaPercentLoad) || 0;
-  if (data.totalCombinedIonLoad !== undefined) payload.totalCombinedIonLoad = Number(data.totalCombinedIonLoad) || 0;
-  if (data.combinedPercentLoad !== undefined) payload.combinedPercentLoad = Number(data.combinedPercentLoad) || 0;
-  if (data.b0 !== undefined) payload.b0 = Number(data.b0);
-  if (data.b1 !== undefined) payload.b1 = Number(data.b1);
-  if (data.b2 !== undefined) payload.b2 = Number(data.b2);
-  if (data.cycleStart !== undefined) payload.cycleStart = Math.max(0, Number(data.cycleStart) || 0);
-  if (data.cycleEnd !== undefined) payload.cycleEnd = Math.max(0, Number(data.cycleEnd) || 0);
-  if (data.distance !== undefined) payload.distance = Math.max(0, Number(data.distance) || 0);
-  if (data.ionsRemoved !== undefined) payload.ionsRemoved = Number(data.ionsRemoved) || 0;
-  if (data.cumulativeIonLoad !== undefined) payload.cumulativeIonLoad = Number(data.cumulativeIonLoad) || 0;
-  if (data.percentLoad !== undefined) payload.percentLoad = Number(data.percentLoad) || 0;
-  if (data.predictedBreakthrough !== undefined) payload.predictedBreakthrough = Number(data.predictedBreakthrough) || 0;
+  if (data.condOut !== undefined) payload.condOut = safeNonNeg(data.condOut, 0);
+  if (data.silica !== undefined) payload.silica = safeNum(data.silica, 0);
+  if (data.silicaOut !== undefined) payload.silicaOut = safeNum(data.silicaOut, 0);
+  if (data.cumulativeSilicaLoad !== undefined) payload.cumulativeSilicaLoad = safeNum(data.cumulativeSilicaLoad, 0);
+  if (data.silicaPercentLoad !== undefined) payload.silicaPercentLoad = safeNum(data.silicaPercentLoad, 0);
+  if (data.totalCombinedIonLoad !== undefined) payload.totalCombinedIonLoad = safeNum(data.totalCombinedIonLoad, 0);
+  if (data.combinedPercentLoad !== undefined) payload.combinedPercentLoad = safeNum(data.combinedPercentLoad, 0);
+  if (data.b0 !== undefined && Number.isFinite(Number(data.b0))) payload.b0 = Number(data.b0);
+  if (data.b1 !== undefined && Number.isFinite(Number(data.b1))) payload.b1 = Number(data.b1);
+  if (data.b2 !== undefined && Number.isFinite(Number(data.b2))) payload.b2 = Number(data.b2);
+  if (data.cycleStart !== undefined) payload.cycleStart = safeNonNeg(data.cycleStart, 0);
+  if (data.cycleEnd !== undefined) payload.cycleEnd = safeNonNeg(data.cycleEnd, 0);
+  if (data.distance !== undefined) payload.distance = safeNonNeg(data.distance, 0);
+  if (data.ionsRemoved !== undefined) payload.ionsRemoved = safeNum(data.ionsRemoved, 0);
+  if (data.cumulativeIonLoad !== undefined) payload.cumulativeIonLoad = safeNum(data.cumulativeIonLoad, 0);
+  if (data.percentLoad !== undefined) payload.percentLoad = safeNum(data.percentLoad, 0);
+  if (data.predictedBreakthrough !== undefined) payload.predictedBreakthrough = safeNum(data.predictedBreakthrough, 0);
 
   return payload;
 }
 
 // Cycle Prediction Batch Records CRUD
 export async function addCyclePrediction(
-  data: Omit<CyclePredictionRecord, 'id' | 'userId' | 'createdAt'>
+  data: Omit<CyclePredictionRecord, 'id' | 'userId' | 'createdAt'>,
+  createdAtIso?: string
 ): Promise<string> {
   const currentUser = auth.currentUser;
   if (!currentUser) throw new Error('User not authenticated');
@@ -917,7 +924,7 @@ export async function addCyclePrediction(
   const path = `users/${currentUser.uid}/cycle_predictions/${recordId}`;
   try {
     const recordRef = doc(db, 'users', currentUser.uid, 'cycle_predictions', recordId);
-    const now = new Date().toISOString();
+    const now = createdAtIso && createdAtIso.trim() ? createdAtIso.trim().slice(0, 64) : new Date().toISOString();
     const payload = buildCycleFirestorePayload(currentUser.uid, now, data, false);
     await setDoc(recordRef, payload);
     return recordId;
@@ -954,7 +961,19 @@ export async function updateCyclePrediction(
   const path = `users/${currentUser.uid}/cycle_predictions/${recordId}`;
   try {
     const recordRef = doc(db, 'users', currentUser.uid, 'cycle_predictions', recordId);
-    const payload = buildCycleFirestorePayload(currentUser.uid, existingCreatedAt, data, true);
+    // Verify authoritative createdAt from Firestore if doc exists so immutable createdAt rule never rejects updates
+    let authoritativeCreatedAt = existingCreatedAt;
+    const existingSnap = await getDoc(recordRef);
+    if (existingSnap.exists()) {
+      const storedCreatedAt = existingSnap.data()?.createdAt;
+      if (typeof storedCreatedAt === 'string' && storedCreatedAt.trim()) {
+        authoritativeCreatedAt = storedCreatedAt;
+      }
+    }
+    if (!authoritativeCreatedAt || !authoritativeCreatedAt.trim()) {
+      authoritativeCreatedAt = new Date().toISOString();
+    }
+    const payload = buildCycleFirestorePayload(currentUser.uid, authoritativeCreatedAt, data, true);
     await setDoc(recordRef, payload);
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);

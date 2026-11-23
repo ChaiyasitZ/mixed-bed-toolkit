@@ -3,7 +3,7 @@
 
 :root {
   --ink: #0f172a;
-  --ink-soft: #475569;
+  --ink-soft: #334155;
   --line: #e2e8f0;
   --bg: #f8fafc;
   --panel: #ffffff;
@@ -13,8 +13,8 @@
   --sidebar: #ffffff;
   --sidebar-border: #e2e8f0;
   --sidebar-title: #0f172a;
-  --sidebar-ink: #334155;
-  --sidebar-muted: #64748b;
+  --sidebar-ink: #1e293b;
+  --sidebar-muted: #475569;
   --sidebar-hover: #f1f5f9;
   --sidebar-active: #eff6ff;
   --sidebar-active-text: #0284c7;
@@ -36,7 +36,7 @@
 :root[data-theme="dark"],
 .dark {
   --ink: #f8fafc;
-  --ink-soft: #94a3b8;
+  --ink-soft: #cbd5e1;
   --line: #1e293b;
   --bg: #070b12;
   --panel: #0f1623;
@@ -46,8 +46,8 @@
   --sidebar: #090d16;
   --sidebar-border: #1e293b;
   --sidebar-title: #f8fafc;
-  --sidebar-ink: #cbd5e1;
-  --sidebar-muted: #64748b;
+  --sidebar-ink: #e2e8f0;
+  --sidebar-muted: #94a3b8;
   --sidebar-hover: #131c2e;
   --sidebar-active: #0c243c;
   --sidebar-active-text: #38bdf8;
@@ -78,7 +78,7 @@ body {
   color: var(--ink);
   font-family: "Prompt", "Noto Sans Thai", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   line-height: 1.6;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;

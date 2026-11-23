@@ -61,7 +61,7 @@ const translations: Record<string, { th: string; en: string }> = {
   step4Title: { th: 'ขั้นที่ 4: Ion Concentration ที่หายไป (mol)', en: 'Step 4: Ions Captured (mol)' },
   step5Title: { th: 'ขั้นที่ 5: Ion Load สะสม (mol)', en: 'Step 5: Cumulative Ion Load (mol)' },
   step6Title: { th: 'ขั้นที่ 6: Percent Load on Resin (%)', en: 'Step 6: Percent Load on Resin (%)' },
-  cutoffThreshold: { th: 'เกณฑ์ตัดรอบหยุดผลิต (98%)', en: 'Cut-off Threshold (98%)' },
+  cutoffThreshold: { th: 'เกณฑ์จุดหยุดระบบ (95%)', en: 'System Stop Threshold (95%)' },
   recommendedCutoff: { th: 'จุดตัดรอบหยุดการผลิตที่แนะนำ', en: 'Recommended Production Cut-off' },
   resinStatusSafe: { th: 'ทำงานปกติ (Safe)', en: 'Normal Operation (Safe)' },
   resinStatusWatch: { th: 'เฝ้าระวัง (Watch)', en: 'Watch Period' },

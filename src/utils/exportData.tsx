@@ -25,10 +25,9 @@ export interface BatchExportPayload {
   condCapacity: number;
   silicaCapacity: number;
   rows: CycleRowItem[];
-  predictedCutoff95Volume?: number;
-  predictedCutoff98Volume?: number;
+  predictedWarning90Volume?: number;
+  predictedStop95Volume?: number;
   predictedBreakthroughVolume?: number;
-  probReach98ByRow?: number[];
   createdAt?: string;
 }
 
@@ -55,13 +54,13 @@ function getRowControlStatus(c: CycleRowItem, isTh: boolean): string {
   if (govPct >= 100 || c.condOut >= 0.1 || c.silicaOut >= 10) {
     return isTh ? 'ทะลุขีดจำกัด (Breakthrough ≥100%)' : 'Breakthrough (>=100%)';
   }
-  if (govPct >= 98) {
-    return isTh ? 'หยุดระบบ / ฟื้นฟูเรซิน (≥98%)' : 'Stop Mixed Bed / Regen (>=98%)';
-  }
   if (govPct >= 95) {
-    return isTh ? 'แจ้งเตือนเฝ้าระวัง (≥95%)' : 'Warning (>=95%)';
+    return isTh ? 'จุดหยุดระบบ / ฟื้นฟูเรซิน (≥95%)' : 'Stop Mixed Bed / Regen (>=95%)';
   }
-  return isTh ? 'ปกติ (<95%)' : 'Normal (<95%)';
+  if (govPct >= 90) {
+    return isTh ? 'จุดแจ้งเตือนระบบ (≥90%)' : 'System Warning (>=90%)';
+  }
+  return isTh ? 'ปกติ (<90%)' : 'Normal (<90%)';
 }
 
 function escapeXml(unsafe: string | number): string {
@@ -104,16 +103,16 @@ export function exportBatchesToFile(
       batches: batches.map((b) => {
         const totalCap = b.condCapacity + b.silicaCapacity;
         const lastRow = b.rows[b.rows.length - 1];
-        const cutoff98 = b.predictedCutoff98Volume ?? (lastRow ? lastRow.predictedCycle : 0);
-        const cutoff95 = b.predictedCutoff95Volume ?? (cutoff98 > 0 ? Number(((cutoff98 * 95) / 98).toFixed(3)) : 0);
+        const stop95 = b.predictedStop95Volume ?? (lastRow ? lastRow.predictedCycle : 0);
+        const warn90 = b.predictedWarning90Volume ?? (stop95 > 0 ? Number(((stop95 * 90) / 95).toFixed(3)) : 0);
         return {
           batchName: b.batchName,
           train: b.train || 'A',
-          condCapacityMol: b.condCapacity,
-          silicaCapacityMol: b.silicaCapacity,
+          estimateMaximumConductivityCapacityMol: b.condCapacity,
+          estimateMaximumSilicaCapacityMol: b.silicaCapacity,
           totalResinCapacityMol: Number(totalCap.toFixed(3)),
-          warning95ThresholdMol: Number((totalCap * 0.95).toFixed(3)),
-          cutoff98ThresholdMol: Number((totalCap * 0.98).toFixed(3)),
+          warning90ThresholdMol: Number((totalCap * 0.90).toFixed(3)),
+          stop95ThresholdMol: Number((totalCap * 0.95).toFixed(3)),
           rowCount: b.rows.length,
           summary: {
             currentWaterVolumeM3: lastRow ? lastRow.cycleEnd : 0,
@@ -121,10 +120,10 @@ export function exportBatchesToFile(
             currentCombinedPercentLoad: lastRow ? lastRow.combinedPercentLoad : 0,
             currentSilicaIonLoadMol: lastRow ? lastRow.cumulativeSilicaLoad : 0,
             currentSilicaPercentLoad: lastRow ? lastRow.silicaPercentLoad : 0,
-            predictedWarning95VolumeM3: cutoff95,
-            predictedCutoff98VolumeM3: cutoff98,
+            predictedWarning90VolumeM3: warn90,
+            predictedStop95VolumeM3: stop95,
           },
-          rows: b.rows.map((r, idx) => ({
+          rows: b.rows.map((r) => ({
             step: r.step,
             label: r.label,
             cycleStartM3: r.cycleStart,
@@ -147,8 +146,7 @@ export function exportBatchesToFile(
             cumulativeCondLoadMol: r.cumulativeIonLoad,
             totalCombinedIonLoadMol: r.totalCombinedIonLoad,
             combinedPercentLoad: r.combinedPercentLoad,
-            probReach98Percent: b.probReach98ByRow?.[idx] ?? null,
-            predictedCutoff98M3: r.predictedCycle,
+            predictedStop95M3: r.predictedCycle,
             status: getRowControlStatus(r, isTh),
           })),
         };
@@ -170,8 +168,8 @@ export function exportBatchesToFile(
       isTh ? 'ป้ายกำกับ (Label)' : 'Label',
       'Cycle (m³)',
       isTh ? 'ระยะห่าง ΔV (m³)' : 'Delta V (m³)',
-      'Silica Inlet (ppb)',
-      'Silica Outlet (ppb)',
+      'Silica MB Inlet (ppb)',
+      'Silica MB Outlet (ppb)',
       'Conc. Silica In (mol/L)',
       'Conc. Silica In (mol/m³)',
       'Conc. Silica Out (mol/L)',
@@ -179,24 +177,22 @@ export function exportBatchesToFile(
       isTh ? 'Ion Silica ที่หายไป (mol)' : 'Silica Removed (mol)',
       isTh ? 'Ion Load Silica สะสม (mol)' : 'Cum. Silica Load (mol)',
       '% Load Silica (%)',
-      'Cond Inlet (µS/cm)',
-      'Cond Outlet (µS/cm)',
+      'Cond. MB Inlet (µS/cm)',
+      'Cond MB Outlet (µS/cm)',
       'Conc. Cond In (mol/m³)',
       'Conc. Cond Out (mol/m³)',
       isTh ? 'Ion Cond ที่หายไป (mol)' : 'Cond Removed (mol)',
       isTh ? 'Ion Load Cond สะสม (mol)' : 'Cum. Cond Load (mol)',
       isTh ? 'Ion Load รวม (mol)' : 'Total Combined Load (mol)',
       '% Load on Resin (%)',
-      'P(Load >= 98%) (%)',
-      isTh ? 'จุดตัดรอบ 98% (m³)' : 'Predicted 98% Cutoff (m³)',
+      isTh ? 'จุดหยุดระบบ 95% (m³)' : 'Predicted 95% System Stop (m³)',
       isTh ? 'สถานะการควบคุม' : 'Control Status',
     ];
 
     const csvLines: string[] = [headers.map(escapeCsvCell).join(',')];
 
     batches.forEach((b) => {
-      b.rows.forEach((c, idx) => {
-        const prob = b.probReach98ByRow?.[idx];
+      b.rows.forEach((c) => {
         const rowCells = [
           b.batchName,
           b.train || 'A',
@@ -221,7 +217,6 @@ export function exportBatchesToFile(
           c.cumulativeIonLoad.toFixed(3),
           c.totalCombinedIonLoad.toFixed(3),
           `${c.combinedPercentLoad.toFixed(3)}%`,
-          prob !== undefined ? `${prob.toFixed(2)}%` : '-',
           c.predictedCycle.toFixed(3),
           getRowControlStatus(c, isTh),
         ];
@@ -258,9 +253,9 @@ export function exportBatchesToFile(
     batches.forEach((b, bIdx) => {
       const totalCap = b.condCapacity + b.silicaCapacity;
       const lastRow = b.rows[b.rows.length - 1];
-      const cutoff98 = b.predictedCutoff98Volume ?? (lastRow ? lastRow.predictedCycle : 0);
-      const cutoff95 =
-        b.predictedCutoff95Volume ?? (cutoff98 > 0 ? Number(((cutoff98 * 95) / 98).toFixed(3)) : 0);
+      const stop95 = b.predictedStop95Volume ?? (lastRow ? lastRow.predictedCycle : 0);
+      const warn90 =
+        b.predictedWarning90Volume ?? (stop95 > 0 ? Number(((stop95 * 90) / 95).toFixed(3)) : 0);
 
       lines.push(
         `[${bIdx + 1}] ${isTh ? 'ชุดข้อมูล (Batch)' : 'Batch'}: ${b.batchName} (Train ${
@@ -268,7 +263,7 @@ export function exportBatchesToFile(
         })`
       );
       lines.push(
-        `    • Cond Capacity: ${b.condCapacity.toFixed(3)} mol | Silica Capacity: ${b.silicaCapacity.toFixed(
+        `    • Estimate maximum conductivity capacity(mol): ${b.condCapacity.toFixed(3)} mol | Estimate maximum silica capacity(mol): ${b.silicaCapacity.toFixed(
           3
         )} mol | ${isTh ? 'ความจุเรซินรวม (100%)' : 'Total Capacity (100%)'}: ${totalCap.toFixed(3)} mol`
       );
@@ -280,14 +275,14 @@ export function exportBatchesToFile(
         })`
       );
       lines.push(
-        `    • ${isTh ? 'จุดแจ้งเตือนระบบ (95%)' : 'Warning Point (95%)'}: ${cutoff95.toFixed(
+        `    • ${isTh ? 'จุดแจ้งเตือนระบบ 90%' : 'System Warning 90%'}: ${warn90.toFixed(
           2
-        )} m³ (${(totalCap * 0.95).toFixed(3)} mol)`
+        )} m³ (${(totalCap * 0.90).toFixed(3)} mol)`
       );
       lines.push(
         `    • ${
-          isTh ? 'จุดตัดรอบหยุดระบบเพื่อ Regeneration (98%)' : 'Cutoff Point (98%)'
-        }: ${cutoff98.toFixed(2)} m³ (${(totalCap * 0.98).toFixed(3)} mol)`
+          isTh ? 'จุดหยุดระบบ 95% เพื่อ Regeneration' : 'System Stop 95% (Regen)'
+        }: ${stop95.toFixed(2)} m³ (${(totalCap * 0.95).toFixed(3)} mol)`
       );
       lines.push(
         `    • ${isTh ? '% Load on Resin ปัจจุบัน' : 'Current % Load'}: ${(lastRow
@@ -357,17 +352,17 @@ export function exportBatchesToFile(
         const sheetName = escapeXml(rawSheetName || `Batch_${idx + 1}`);
         const totalCap = b.condCapacity + b.silicaCapacity;
         const lastRow = b.rows[b.rows.length - 1];
-        const cutoff98 = b.predictedCutoff98Volume ?? (lastRow ? lastRow.predictedCycle : 0);
-        const cutoff95 =
-          b.predictedCutoff95Volume ?? (cutoff98 > 0 ? Number(((cutoff98 * 95) / 98).toFixed(3)) : 0);
+        const stop95 = b.predictedStop95Volume ?? (lastRow ? lastRow.predictedCycle : 0);
+        const warn90 =
+          b.predictedWarning90Volume ?? (stop95 > 0 ? Number(((stop95 * 90) / 95).toFixed(3)) : 0);
 
         const colHeaders = [
           '#',
           isTh ? 'รอบ (Step)' : 'Step',
           'Cycle (m³)',
           isTh ? 'ระยะห่าง ΔV (m³)' : 'Delta V (m³)',
-          'Silica Inlet (ppb)',
-          'Silica Outlet (ppb)',
+          'Silica MB Inlet (ppb)',
+          'Silica MB Outlet (ppb)',
           'Conc. Silica In (mol/L)',
           'Conc. Silica In (mol/m³)',
           'Conc. Silica Out (mol/L)',
@@ -375,25 +370,23 @@ export function exportBatchesToFile(
           isTh ? 'Ion Silica ที่หายไป (mol)' : 'Silica Removed (mol)',
           isTh ? 'Ion Load Silica สะสม (mol)' : 'Cum. Silica Load (mol)',
           '% Load Silica (%)',
-          'Cond Inlet (µS/cm)',
-          'Cond Outlet (µS/cm)',
+          'Cond. MB Inlet (µS/cm)',
+          'Cond MB Outlet (µS/cm)',
           'Conc. Cond In (mol/m³)',
           'Conc. Cond Out (mol/m³)',
           isTh ? 'Ion Cond ที่หายไป (mol)' : 'Cond Removed (mol)',
           isTh ? 'Ion Load Cond สะสม (mol)' : 'Cum. Cond Load (mol)',
           isTh ? 'Ion Load รวม (mol)' : 'Total Combined Load (mol)',
           '% Load on Resin (%)',
-          'P(Load >= 98%) (%)',
-          isTh ? 'จุดตัดรอบ 98% (m³)' : 'Predicted 98% Cutoff (m³)',
+          isTh ? 'จุดหยุดระบบ 95% (m³)' : 'Predicted 95% System Stop (m³)',
           isTh ? 'สถานะการควบคุม' : 'Control Status',
         ];
 
         const dataRowsXml = b.rows
-          .map((c, rIdx) => {
-            const prob = b.probReach98ByRow?.[rIdx];
+          .map((c) => {
             const govPct = Math.max(c.combinedPercentLoad, c.silicaPercentLoad);
             const rowStyle =
-              govPct >= 98 ? 'sStopRow' : govPct >= 95 ? 'sWarnRow' : 'sNormalRow';
+              govPct >= 95 ? 'sStopRow' : govPct >= 90 ? 'sWarnRow' : 'sNormalRow';
 
             const numCell = (val: number) =>
               `<Cell ss:StyleID="${rowStyle}"><Data ss:Type="Number">${
@@ -424,11 +417,6 @@ export function exportBatchesToFile(
               ${numCell(Number(c.cumulativeIonLoad.toFixed(3)))}
               ${numCell(Number(c.totalCombinedIonLoad.toFixed(3)))}
               ${numCell(Number(c.combinedPercentLoad.toFixed(3)))}
-              ${
-                prob !== undefined
-                  ? numCell(Number(prob.toFixed(2)))
-                  : strCell('-')
-              }
               ${numCell(Number(c.predictedCycle.toFixed(3)))}
               ${strCell(getRowControlStatus(c, isTh))}
             </Row>`;
@@ -441,8 +429,8 @@ export function exportBatchesToFile(
             <Column ss:Width="105"/>
             <Column ss:Width="85"/>
             <Column ss:Width="85"/>
-            <Column ss:Width="95"/>
-            <Column ss:Width="95"/>
+            <Column ss:Width="145"/>
+            <Column ss:Width="115"/>
             <Column ss:Width="115"/>
             <Column ss:Width="115"/>
             <Column ss:Width="115"/>
@@ -450,42 +438,41 @@ export function exportBatchesToFile(
             <Column ss:Width="115"/>
             <Column ss:Width="120"/>
             <Column ss:Width="95"/>
-            <Column ss:Width="95"/>
-            <Column ss:Width="95"/>
+            <Column ss:Width="155"/>
+            <Column ss:Width="115"/>
             <Column ss:Width="110"/>
             <Column ss:Width="110"/>
             <Column ss:Width="110"/>
             <Column ss:Width="115"/>
             <Column ss:Width="115"/>
             <Column ss:Width="110"/>
-            <Column ss:Width="100"/>
             <Column ss:Width="110"/>
             <Column ss:Width="165"/>
             <Row ss:Height="24">
-              <Cell ss:MergeAcross="23" ss:StyleID="sTitle">
+              <Cell ss:MergeAcross="22" ss:StyleID="sTitle">
                 <Data ss:Type="String">${escapeXml(
-                  `${b.batchName} (Train ${b.train || 'A'}) — Cond Cap: ${b.condCapacity} mol | Silica Cap: ${b.silicaCapacity} mol | Total: ${totalCap.toFixed(
+                  `${b.batchName} (Train ${b.train || 'A'}) — Estimate maximum conductivity capacity(mol): ${b.condCapacity} | Estimate maximum silica capacity(mol): ${b.silicaCapacity} | Total: ${totalCap.toFixed(
                     2
                   )} mol`
                 )}</Data>
               </Cell>
             </Row>
             <Row ss:Height="20">
-              <Cell ss:MergeAcross="23" ss:StyleID="sSubtitle">
+              <Cell ss:MergeAcross="22" ss:StyleID="sSubtitle">
                 <Data ss:Type="String">${escapeXml(
                   isTh
                     ? `ปริมาตรน้ำปัจจุบัน: ${(lastRow ? lastRow.cycleEnd : 0).toFixed(
                         2
-                      )} m³ | แจ้งเตือนระบบ 95%: ${cutoff95.toFixed(
+                      )} m³ | จุดแจ้งเตือนระบบ 90%: ${warn90.toFixed(
                         2
-                      )} m³ | จุดตัดรอบหยุดระบบ 98%: ${cutoff98.toFixed(
+                      )} m³ | จุดหยุดระบบ 95%: ${stop95.toFixed(
                         2
                       )} m³ | % Load ปัจจุบัน: ${(lastRow ? lastRow.combinedPercentLoad : 0).toFixed(3)}%`
                     : `Current Water: ${(lastRow ? lastRow.cycleEnd : 0).toFixed(
                         2
-                      )} m³ | 95% Warning: ${cutoff95.toFixed(
+                      )} m³ | 90% System Warning: ${warn90.toFixed(
                         2
-                      )} m³ | 98% Cutoff: ${cutoff98.toFixed(
+                      )} m³ | 95% System Stop: ${stop95.toFixed(
                         2
                       )} m³ | Current Load: ${(lastRow ? lastRow.combinedPercentLoad : 0).toFixed(3)}%`
                 )}</Data>
@@ -569,16 +556,16 @@ export function convertRecordsToExportPayloads(
 ): BatchExportPayload[] {
   return records.map((r) => {
     const norm = normalizeCycleRecordToBatch(r);
-    const cutoff98 = norm.predictedCycle;
-    const cutoff95 = cutoff98 > 0 ? Number(((cutoff98 * 95) / 98).toFixed(3)) : 0;
+    const stop95 = norm.predictedCycle;
+    const warn90 = stop95 > 0 ? Number(((stop95 * 90) / 95).toFixed(3)) : 0;
     return {
       batchName: norm.batchName,
       train: norm.train || 'A',
       condCapacity: norm.condCapacity || DEFAULT_COND_CAPACITY,
       silicaCapacity: norm.silicaCapacity || DEFAULT_SILICA_CAPACITY,
       rows: norm.rows,
-      predictedCutoff95Volume: cutoff95,
-      predictedCutoff98Volume: cutoff98,
+      predictedWarning90Volume: warn90,
+      predictedStop95Volume: stop95,
       predictedBreakthroughVolume: norm.predictedBreakthrough,
       createdAt: norm.createdAt,
     };
@@ -684,10 +671,10 @@ export const ExportDataMenu: React.FC<ExportMenuProps> = ({
         </button>
 
         {isOpen && (
-          <div className="absolute right-0 mt-1.5 w-64 rounded-2xl bg-[var(--panel)] border border-[var(--line)] shadow-xl z-50 p-1.5 space-y-1">
-            <div className="px-2.5 py-1 text-[11px] font-bold text-[var(--ink-soft)] border-b border-[var(--line)] flex items-center justify-between">
+          <div className="absolute right-0 mt-1.5 w-72 rounded-2xl bg-[var(--panel)] border border-[var(--line)] shadow-xl z-50 p-1.5 space-y-1">
+            <div className="px-2.5 py-1.5 text-xs font-bold text-[var(--ink)] border-b border-[var(--line)] flex items-center justify-between">
               <span>{isTh ? 'เลือกรูปแบบไฟล์ที่ต้องการ' : 'Select Export Format'}</span>
-              <span className="font-mono text-[10px]">4 formats</span>
+              <span className="font-mono text-[11px] text-[var(--ink-soft)]">4 formats</span>
             </div>
             {formatOptions.map((opt) => (
               <button
@@ -700,11 +687,11 @@ export const ExportDataMenu: React.FC<ExportMenuProps> = ({
                   {opt.icon}
                   <div className="min-w-0">
                     <div className="text-xs font-bold text-[var(--ink)] truncate">{opt.title}</div>
-                    <div className="text-[10px] text-[var(--ink-soft)] truncate">{opt.desc}</div>
+                    <div className="text-xs text-[var(--ink-soft)] truncate">{opt.desc}</div>
                   </div>
                 </div>
                 <span
-                  className={`px-1.5 py-0.5 rounded text-[10px] font-mono font-bold border shrink-0 ${opt.badgeClass}`}
+                  className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-bold border shrink-0 ${opt.badgeClass}`}
                 >
                   {recentFormat === opt.id ? <Check className="w-3 h-3 inline" /> : opt.ext}
                 </span>
@@ -741,26 +728,26 @@ export const ExportDataMenu: React.FC<ExportMenuProps> = ({
               { id: 'json' as const, label: 'JSON', color: 'hover:text-indigo-500' },
             ] as const
           ).map((btn) => (
-            <button
-              key={btn.id}
-              type="button"
-              disabled={disabled}
-              onClick={() => handleSelect(btn.id)}
-              className={`px-2 py-1 rounded-lg text-[11px] font-mono font-bold text-[var(--ink-soft)] ${btn.color} hover:bg-[var(--panel)] transition-colors cursor-pointer disabled:opacity-40`}
-              title={`${isTh ? 'ส่งออกเป็น' : 'Export as'} ${btn.label}`}
-            >
-              {recentFormat === btn.id ? <Check className="w-3 h-3 inline text-emerald-500" /> : btn.label}
-            </button>
-          ))}
+              <button
+                key={btn.id}
+                type="button"
+                disabled={disabled}
+                onClick={() => handleSelect(btn.id)}
+                className={`px-2 py-1 rounded-lg text-xs font-mono font-bold text-[var(--ink-soft)] ${btn.color} hover:bg-[var(--panel)] transition-colors cursor-pointer disabled:opacity-40`}
+                title={`${isTh ? 'ส่งออกเป็น' : 'Export as'} ${btn.label}`}
+              >
+                {recentFormat === btn.id ? <Check className="w-3 h-3 inline text-emerald-500" /> : btn.label}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
 
       {/* Dropdown Panel with Full Details */}
       {isOpen && (
         <div className="absolute right-0 top-full mt-1.5 w-72 rounded-2xl bg-[var(--panel)] border border-[var(--line)] shadow-xl z-50 p-2 space-y-1">
           <div className="px-2.5 py-1.5 text-xs font-bold text-[var(--ink)] border-b border-[var(--line)] flex items-center justify-between">
             <span>{isTh ? 'ส่งออกข้อมูลการคำนวณ' : 'Export Calculation Data'}</span>
-            <span className="text-[10px] font-mono text-[var(--ink-soft)]">Excel · CSV · TXT · JSON</span>
+            <span className="text-[11px] font-mono text-[var(--ink-soft)]">Excel · CSV · TXT · JSON</span>
           </div>
           {formatOptions.map((opt) => (
             <button
@@ -775,11 +762,11 @@ export const ExportDataMenu: React.FC<ExportMenuProps> = ({
                 </div>
                 <div className="min-w-0">
                   <div className="text-xs font-bold text-[var(--ink)] truncate">{opt.title}</div>
-                  <div className="text-[11px] text-[var(--ink-soft)] truncate">{opt.desc}</div>
+                  <div className="text-xs text-[var(--ink-soft)] truncate">{opt.desc}</div>
                 </div>
               </div>
               <span
-                className={`px-2 py-0.5 rounded-md text-[11px] font-mono font-bold border shrink-0 ${opt.badgeClass}`}
+                className={`px-2 py-0.5 rounded-md text-xs font-mono font-bold border shrink-0 ${opt.badgeClass}`}
               >
                 {recentFormat === opt.id ? <Check className="w-3.5 h-3.5 inline" /> : opt.ext}
               </span>

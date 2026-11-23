@@ -127,22 +127,23 @@ function MainApp() {
 
   // Realtime Firestore listeners when user is authenticated
   useEffect(() => {
-    if (!user) {
+    const uid = user?.uid;
+    if (!uid) {
       setCloudSaltRecords([]);
       setCloudSilicaRecords([]);
       setCloudCycleRecords([]);
       return;
     }
 
-    const unsubSalt = subscribeSaltRecords(user.uid, (records) => {
+    const unsubSalt = subscribeSaltRecords(uid, (records) => {
       setCloudSaltRecords(records);
     });
 
-    const unsubSilica = subscribeSilicaRecords(user.uid, (records) => {
+    const unsubSilica = subscribeSilicaRecords(uid, (records) => {
       setCloudSilicaRecords(records);
     });
 
-    const unsubCycle = subscribeCyclePredictions(user.uid, (records) => {
+    const unsubCycle = subscribeCyclePredictions(uid, (records) => {
       setCloudCycleRecords(records);
     });
 
@@ -151,7 +152,7 @@ function MainApp() {
       unsubSilica();
       unsubCycle();
     };
-  }, [user]);
+  }, [user?.uid]);
 
   // Active records: prioritize cloud if logged in
   const activeSaltRecords = user ? cloudSaltRecords : localSaltRecords;

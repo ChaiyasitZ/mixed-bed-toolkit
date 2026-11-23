@@ -593,7 +593,7 @@ export const SilicaRejectionView: React.FC<SilicaRejectionViewProps> = ({
                       r={isHovered ? 6 : 4}
                       className={d.rejection >= 95 ? 'fill-purple-600 stroke-white stroke-2' : 'fill-amber-600 stroke-white stroke-2'}
                     />
-                    <text x={cx} y={H - 8} textAnchor="middle" className="fill-[var(--ink-soft)] text-[11px]">
+                    <text x={cx} y={H - 8} textAnchor="middle" className="fill-[var(--ink-soft)] text-xs font-mono">
                       {d.cycle ? (d.cycle.length > 8 ? d.cycle.substring(0, 8) + '..' : d.cycle) : `#${i + 1}`}
                     </text>
                   </g>
@@ -618,13 +618,28 @@ export const SilicaRejectionView: React.FC<SilicaRejectionViewProps> = ({
           {/* Table */}
           <div className="overflow-x-auto max-h-60 overflow-y-auto">
             <table className="w-full min-w-[500px] text-xs sm:text-sm text-left border-collapse">
-              <thead className="sticky top-0 bg-[var(--panel)] text-[var(--ink-soft)] font-semibold border-b border-[var(--line)]">
-                <tr>
-                  <th className="py-2.5 px-3">{isTh ? 'รอบ/ป้ายกำกับ' : 'Cycle / Label'}</th>
-                  <th className="py-2.5 px-3">Feed (ppb)</th>
-                  <th className="py-2.5 px-3">Permeate (ppb)</th>
-                  <th className="py-2.5 px-3">%Rejection</th>
-                  <th className="py-2.5 px-3 text-right">{isTh ? 'จัดการ' : 'Action'}</th>
+              <thead className="sticky top-0 bg-slate-100 dark:bg-slate-800/95 text-[var(--ink)] font-bold border-b-2 border-[var(--line)]">
+                <tr className="align-top">
+                  <th className="py-2.5 px-3 text-[13px] sm:text-sm font-bold text-[var(--ink)]">{isTh ? 'รอบ/ป้ายกำกับ' : 'Cycle / Label'}</th>
+                  <th className="py-2.5 px-3">
+                    <div className="leading-snug">
+                      <div className="text-[13px] sm:text-sm font-bold text-[var(--ink)]">Feed</div>
+                      <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(ppb)</div>
+                    </div>
+                  </th>
+                  <th className="py-2.5 px-3">
+                    <div className="leading-snug">
+                      <div className="text-[13px] sm:text-sm font-bold text-[var(--ink)]">Permeate</div>
+                      <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(ppb)</div>
+                    </div>
+                  </th>
+                  <th className="py-2.5 px-3">
+                    <div className="leading-snug">
+                      <div className="text-[13px] sm:text-sm font-bold text-[var(--ink)]">%Rejection</div>
+                      <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(%)</div>
+                    </div>
+                  </th>
+                  <th className="py-2.5 px-3 text-right text-[13px] sm:text-sm font-bold text-[var(--ink)]">{isTh ? 'จัดการ' : 'Action'}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--line)]">

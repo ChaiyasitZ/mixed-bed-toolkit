@@ -298,7 +298,7 @@ export const EditRecordModal: React.FC<EditModalProps> = ({
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs sm:text-sm font-semibold text-[var(--ink)] mb-1">
-                    {isTh ? 'Cond. MB Inlet / RO Outlet (µS/cm)' : 'Cond. MB Inlet (µS/cm)'}
+                    Cond. MB Inlet (µS/cm)
                   </label>
                   <input
                     type="number"

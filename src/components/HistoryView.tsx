@@ -296,8 +296,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           ? 'แถวนี้เป็นแถวสุดท้ายในชุดข้อมูล เมื่อลบแล้วระบบจะลบชุดข้อมูลนี้ออกจากประวัติด้วย'
           : 'This is the last remaining row in this batch. Deleting it will remove the batch record.'
         : isTh
-        ? 'เมื่อลบแถวนี้ ระบบจะคำนวณระยะห่าง (ΔV), Ion Load (Cond + Silica), % Load และจุดตัดรอบ 98% ของแถวที่เหลือในชุดข้อมูลนี้ใหม่โดยอัตโนมัติ เพื่อให้ข้อมูลในชุดมีความสอดคล้องกัน'
-        : 'Deleting this row will automatically recalculate ΔV, Cumulative Ion Load (Cond + Silica), % Load, and 98% cut-off for all remaining rows in this batch.',
+        ? 'เมื่อลบแถวนี้ ระบบจะคำนวณระยะห่าง (ΔV), Ion Load (Cond + Silica), % Load และจุดหยุดระบบ 95% ของแถวที่เหลือในชุดข้อมูลนี้ใหม่โดยอัตโนมัติ เพื่อให้ข้อมูลในชุดมีความสอดคล้องกัน'
+        : 'Deleting this row will automatically recalculate ΔV, Cumulative Ion Load (Cond + Silica), % Load, and 95% system stop for all remaining rows in this batch.',
       onConfirm: async () => {
         if (user) {
           await deleteRowFromCloudBatch(batch, row.rowId, isTh);
@@ -517,7 +517,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
               {storageMetrics.isCloud ? <Server className="w-5 h-5" /> : <HardDrive className="w-5 h-5" />}
             </div>
             <div className="min-w-0 space-y-0.5">
-              <div className="text-[11px] text-[var(--ink-soft)] flex items-center gap-1.5">
+              <div className="text-xs font-medium text-[var(--ink-soft)] flex items-center gap-1.5">
                 <span>{isTh ? 'แหล่งจัดเก็บข้อมูล' : 'Storage Location'}</span>
                 <CheckCircle2
                   className={`w-3.5 h-3.5 ${storageMetrics.isCloud ? 'text-emerald-500' : 'text-sky-500'}`}
@@ -532,7 +532,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                   ? 'หน่วยความจำเบราว์เซอร์ (Local)'
                   : 'Browser Local Storage'}
               </div>
-              <div className="text-[11px] font-mono text-[var(--ink-soft)] truncate">
+              <div className="text-xs font-mono text-[var(--ink-soft)] truncate">
                 {storageMetrics.isCloud
                   ? user?.email
                   : isTh
@@ -545,13 +545,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           {/* 2. Used Space & Record Count */}
           <div className="p-3.5 rounded-xl bg-[var(--bg)]/60 border border-[var(--line)] flex items-center justify-between gap-3">
             <div className="space-y-0.5 min-w-0">
-              <div className="text-[11px] text-[var(--ink-soft)]">
+              <div className="text-xs font-medium text-[var(--ink-soft)]">
                 {isTh ? 'พื้นที่ที่ใช้งานแล้ว (Used)' : 'Storage Used'}
               </div>
               <div className="text-base sm:text-lg font-bold font-mono tabular-nums text-[var(--ink)]">
                 {storageMetrics.usedFormatted}
               </div>
-              <div className="text-[11px] font-mono tabular-nums text-[var(--ink-soft)] truncate">
+              <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)] truncate">
                 {isTh
                   ? `${cycleRecords.length} ชุดข้อมูล · รวม ${totalSavedRows} รอบ`
                   : `${cycleRecords.length} batches · ${totalSavedRows} total steps`}
@@ -569,13 +569,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
           {/* 3. Remaining Capacity & Total Quota */}
           <div className="p-3.5 rounded-xl bg-[var(--bg)]/60 border border-[var(--line)] flex items-center justify-between gap-3">
             <div className="space-y-0.5 min-w-0">
-              <div className="text-[11px] text-[var(--ink-soft)]">
+              <div className="text-xs font-medium text-[var(--ink-soft)]">
                 {isTh ? 'พื้นที่คงเหลือ (Remaining)' : 'Remaining Capacity'}
               </div>
               <div className="text-base sm:text-lg font-bold font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
                 {storageMetrics.remainingFormatted}
               </div>
-              <div className="text-[11px] font-mono tabular-nums text-[var(--ink-soft)] truncate">
+              <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)] truncate">
                 {isTh
                   ? `จากความจุทั้งหมด ${storageMetrics.quotaFormatted}`
                   : `Total Quota: ${storageMetrics.quotaFormatted}`}
@@ -593,7 +593,7 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
 
         {/* Capacity Progress Bar */}
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11px] font-mono tabular-nums text-[var(--ink-soft)]">
+          <div className="flex items-center justify-between text-xs font-mono tabular-nums text-[var(--ink-soft)]">
             <span>
               {isTh
                 ? `อัตราการใช้พื้นที่ฐานข้อมูล (${storageMetrics.usedFormatted} / ${storageMetrics.quotaFormatted})`
@@ -705,13 +705,13 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                           </span>
                         )}
                         {isCycleBatch && item.batchRecord && (
-                          <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                          <span className="text-xs font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                             {item.batchRecord.rowCount} {isTh ? 'แถวข้อมูล' : 'rows'}
                           </span>
                         )}
                       </div>
                       <div className="text-xs sm:text-sm text-[var(--ink-soft)] mt-0.5">{item.details}</div>
-                      <div className="text-xs text-[var(--ink-soft)]/75 mt-0.5">
+                      <div className="text-xs text-[var(--ink-soft)] mt-0.5">
                         {new Date(item.createdAt).toLocaleString(isTh ? 'th-TH' : 'en-US')}
                       </div>
                     </div>
@@ -720,8 +720,8 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                   <div className="flex items-center justify-between sm:justify-end gap-2.5 flex-shrink-0 border-t sm:border-t-0 pt-2.5 sm:pt-0 border-[var(--line)]">
                     <div className="text-left sm:text-right mr-1">
                       {isCycleBatch && (
-                        <div className="text-[10px] text-[var(--ink-soft)] uppercase font-semibold">
-                          {isTh ? 'คาดการณ์ตัดรอบ 98%' : '98% Cut-off'}
+                        <div className="text-xs text-[var(--ink-soft)] font-semibold">
+                          {isTh ? 'จุดหยุดระบบ 95%' : '95% System Stop'}
                         </div>
                       )}
                       <div
@@ -825,20 +825,65 @@ export const HistoryView: React.FC<HistoryViewProps> = ({
                     </div>
 
                     <div className="overflow-x-auto rounded-xl border border-[var(--line)] bg-[var(--panel)]">
-                      <table className="w-full min-w-[900px] text-xs text-left border-collapse">
-                        <thead className="bg-[var(--bg)] text-[var(--ink-soft)] font-bold border-b border-[var(--line)]">
-                          <tr>
-                            <th className="py-2 px-2.5 text-center">#</th>
-                            <th className="py-2 px-2.5">{isTh ? 'รอบย่อย' : 'Step'}</th>
-                            <th className="py-2 px-2.5">Cycle (m³)</th>
-                            <th className="py-2 px-2.5">ΔV (m³)</th>
-                            <th className="py-2 px-2.5">Silica In/Out (ppb)</th>
-                            <th className="py-2 px-2.5">Cond In/Out (µS)</th>
-                            <th className="py-2 px-2.5">Ion Load Silica (mol)</th>
-                            <th className="py-2 px-2.5">Ion Load Cond (mol)</th>
-                            <th className="py-2 px-2.5">Ion Load รวม (mol)</th>
-                            <th className="py-2 px-2.5">% Load รวม</th>
-                            <th className="py-2 px-2.5 text-right">{isTh ? 'จัดการแถว' : 'Row Action'}</th>
+                      <table className="w-full min-w-[900px] text-xs sm:text-[13px] text-left border-collapse">
+                        <thead className="bg-slate-100 dark:bg-slate-800/95 text-[var(--ink)] font-bold border-b-2 border-[var(--line)]">
+                          <tr className="align-top">
+                            <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)]">#</th>
+                            <th className="py-2.5 px-2.5 whitespace-nowrap">
+                              <div className="leading-snug">
+                                <div className="text-[13px] font-bold text-[var(--ink)]">{isTh ? 'รอบย่อย' : 'Step'}</div>
+                                <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(Label)</div>
+                              </div>
+                            </th>
+                            <th className="py-2.5 px-2.5 whitespace-nowrap">
+                              <div className="leading-snug">
+                                <div className="text-[13px] font-bold text-[var(--ink)]">Cycle</div>
+                                <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(m³)</div>
+                              </div>
+                            </th>
+                            <th className="py-2.5 px-2.5 whitespace-nowrap">
+                              <div className="leading-snug">
+                                <div className="text-[13px] font-bold text-[var(--ink)]">ΔV</div>
+                                <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(m³)</div>
+                              </div>
+                            </th>
+                            <th className="py-2.5 px-2.5 whitespace-nowrap">
+                              <div className="leading-snug">
+                                <div className="text-[13px] font-bold text-indigo-700 dark:text-indigo-300">Silica In/Out</div>
+                                <div className="text-[11px] font-mono font-semibold text-indigo-600/90 dark:text-indigo-300/90">(ppb)</div>
+                              </div>
+                            </th>
+                            <th className="py-2.5 px-2.5 whitespace-nowrap">
+                              <div className="leading-snug">
+                                <div className="text-[13px] font-bold text-sky-700 dark:text-sky-300">Cond In/Out</div>
+                                <div className="text-[11px] font-mono font-semibold text-sky-600/90 dark:text-sky-300/90">(µS/cm)</div>
+                              </div>
+                            </th>
+                            <th className="py-2.5 px-2.5 whitespace-nowrap">
+                              <div className="leading-snug">
+                                <div className="text-[13px] font-bold text-indigo-700 dark:text-indigo-300">Ion Load Silica</div>
+                                <div className="text-[11px] font-mono font-semibold text-indigo-600/90 dark:text-indigo-300/90">(mol)</div>
+                              </div>
+                            </th>
+                            <th className="py-2.5 px-2.5 whitespace-nowrap">
+                              <div className="leading-snug">
+                                <div className="text-[13px] font-bold text-sky-700 dark:text-sky-300">Ion Load Cond</div>
+                                <div className="text-[11px] font-mono font-semibold text-sky-600/90 dark:text-sky-300/90">(mol)</div>
+                              </div>
+                            </th>
+                            <th className="py-2.5 px-2.5 whitespace-nowrap">
+                              <div className="leading-snug">
+                                <div className="text-[13px] font-bold text-emerald-700 dark:text-emerald-300">Ion Load รวม</div>
+                                <div className="text-[11px] font-mono font-semibold text-emerald-600/90 dark:text-emerald-300/90">(mol)</div>
+                              </div>
+                            </th>
+                            <th className="py-2.5 px-2.5 whitespace-nowrap">
+                              <div className="leading-snug">
+                                <div className="text-[13px] font-bold text-[var(--ink)]">% Load รวม</div>
+                                <div className="text-[11px] font-mono font-semibold text-slate-600 dark:text-slate-300">(%)</div>
+                              </div>
+                            </th>
+                            <th className="py-2.5 px-2.5 text-right text-[13px] font-bold text-[var(--ink)] whitespace-nowrap">{isTh ? 'จัดการแถว' : 'Row Action'}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--line)] font-mono">

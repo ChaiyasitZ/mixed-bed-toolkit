@@ -82,10 +82,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
                   : '01. Cycle & Ion Load Forecasting'}
               </h2>
             </div>
-            <p className="text-xs text-[var(--ink-soft)] leading-relaxed">
+            <p className="text-xs sm:text-sm text-[var(--ink-soft)] leading-relaxed">
               {isTh
-                ? 'คำนวณความเข้มข้น Inlet/Outlet, Ion ที่หายไป, Ion Load สะสม, % Load on Resin และจุดตัดรอบ 98%'
-                : 'Calculate Inlet/Outlet concentrations, Ions Removed, Cumulative Ion Load, % Load on Resin, and 98% cut-off.'}
+                ? 'คำนวณความเข้มข้น Inlet/Outlet, Ion ที่หายไป, Ion Load สะสม, % Load on Resin และจุดหยุดระบบ 95%'
+                : 'Calculate Inlet/Outlet concentrations, Ions Removed, Cumulative Ion Load, % Load on Resin, and 95% system stop.'}
             </p>
           </div>
           <div className="mt-3.5 pt-2.5 border-t border-[var(--line)] flex items-center justify-between text-xs text-[var(--accent)] font-semibold">
@@ -108,7 +108,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 {isTh ? '02. ฐานข้อมูลประวัติชุดข้อมูล (Batch History)' : '02. Saved Batch History & Export'}
               </h2>
             </div>
-            <p className="text-xs text-[var(--ink-soft)] leading-relaxed">
+            <p className="text-xs sm:text-sm text-[var(--ink-soft)] leading-relaxed">
               {isTh
                 ? 'เรียกดูชุดข้อมูลที่บันทึกไว้ โหลดกลับมาแก้ไข ลบรายแถวหรือทั้งชุด และส่งออกไฟล์ Excel / CSV / TXT / JSON'
                 : 'Browse saved batches, load into the editor, delete individual rows or full sets, and export Excel / CSV / TXT / JSON.'}
@@ -129,7 +129,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           transition={{ duration: 0.18 }}
           className="p-3.5 sm:p-4 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-1"
         >
-          <div className="text-xs text-[var(--ink-soft)] truncate">
+          <div className="text-xs sm:text-[13px] font-semibold text-[var(--ink)] truncate">
             {isTh ? 'ชุดข้อมูลที่บันทึก' : 'Saved Batches'}
           </div>
           <div className="text-lg sm:text-xl font-bold text-[var(--ink)] font-mono tabular-nums whitespace-nowrap">
@@ -144,7 +144,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <span className="text-[var(--ink-soft)]/50">—</span>
             )}
           </div>
-          <div className="text-[11px] text-[var(--ink-soft)] truncate">
+          <div className="text-xs text-[var(--ink-soft)] truncate">
             {!user
               ? isTh
                 ? 'ยังไม่ได้เข้าสู่ระบบ'
@@ -163,8 +163,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
           transition={{ duration: 0.18, delay: 0.03 }}
           className="p-3.5 sm:p-4 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-1"
         >
-          <div className="text-xs text-[var(--ink-soft)] truncate">
-            {isTh ? 'จุดตัดรอบ 98%' : '98% Cut-off Volume'}
+          <div className="text-xs sm:text-[13px] font-semibold text-[var(--ink)] truncate">
+            {isTh ? 'จุดหยุดระบบ 95%' : '95% System Stop Volume'}
           </div>
           <div
             className={`text-lg sm:text-xl font-bold font-mono tabular-nums whitespace-nowrap ${
@@ -173,7 +173,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           >
             {latestBatch ? `${latestBatch.predictedCycle.toFixed(3)} m³` : '—'}
           </div>
-          <div className="text-[11px] text-[var(--ink-soft)] truncate">
+          <div className="text-xs text-[var(--ink-soft)] truncate">
             {latestBatch
               ? `Cycle ${(latestBatch.cycleEnd || 0).toFixed(2)} m³`
               : isTh
@@ -188,7 +188,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           transition={{ duration: 0.18, delay: 0.06 }}
           className="p-3.5 sm:p-4 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-1"
         >
-          <div className="text-xs text-[var(--ink-soft)] truncate">
+          <div className="text-xs sm:text-[13px] font-semibold text-[var(--ink)] truncate">
             {isTh ? 'Ion Load รวมล่าสุด' : 'Combined Ion Load'}
           </div>
           <div
@@ -198,7 +198,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           >
             {latestBatch ? `${(latestBatch.totalCombinedIonLoad || 0).toFixed(3)} mol` : '—'}
           </div>
-          <div className="text-[11px] text-[var(--ink-soft)] font-mono tabular-nums truncate">
+          <div className="text-xs text-[var(--ink-soft)] font-mono tabular-nums truncate">
             {latestBatch
               ? `Cond ${(latestBatch.cumulativeIonLoad || 0).toFixed(3)} · Si ${(latestBatch.cumulativeSilicaLoad || 0).toFixed(3)}`
               : isTh
@@ -213,7 +213,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           transition={{ duration: 0.18, delay: 0.09 }}
           className="p-3.5 sm:p-4 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-1"
         >
-          <div className="text-xs text-[var(--ink-soft)] truncate">
+          <div className="text-xs sm:text-[13px] font-semibold text-[var(--ink)] truncate">
             {isTh ? '% Load เรซินล่าสุด' : 'Resin % Load'}
           </div>
           <div
@@ -223,7 +223,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           >
             {latestBatch ? `${(latestBatch.combinedPercentLoad || 0).toFixed(3)}%` : '—'}
           </div>
-          <div className="text-[11px] text-[var(--ink-soft)] font-mono tabular-nums truncate">
+          <div className="text-xs text-[var(--ink-soft)] font-mono tabular-nums truncate">
             {latestBatch
               ? `Silica: ${(latestBatch.silicaPercentLoad || 0).toFixed(3)}%`
               : isTh

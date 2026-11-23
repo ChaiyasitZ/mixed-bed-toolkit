@@ -181,7 +181,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   </div>
 
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium leading-tight truncate">
+                    <div className="text-sm font-semibold leading-tight truncate">
                       {item.label}
                     </div>
                     <div className="text-xs text-[var(--sidebar-muted)] leading-tight truncate mt-0.5">
@@ -222,7 +222,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <div className="text-xs sm:text-sm font-semibold text-[var(--sidebar-title)] truncate leading-tight">
                     {user.displayName || t('userGoogle')}
                   </div>
-                  <div className="text-[11px] text-[var(--sidebar-muted)] truncate mt-0.5 leading-tight">
+                  <div className="text-xs text-[var(--sidebar-muted)] truncate mt-0.5 leading-tight">
                     {user.email}
                   </div>
                 </div>
@@ -258,7 +258,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <PanelLeftClose className="w-4 h-4 text-[var(--accent)]" />
                 <span>{t('hideSidebar')}</span>
               </div>
-              <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[var(--sidebar-icon-bg)] border border-[var(--sidebar-border)] text-[var(--sidebar-muted)]">
+              <kbd className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-[var(--sidebar-icon-bg)] border border-[var(--sidebar-border)] text-[var(--sidebar-muted)]">
                 Ctrl+B
               </kbd>
             </button>

@@ -102,17 +102,21 @@ export function exportBatchesToFile(
       batchCount: batches.length,
       batches: batches.map((b) => {
         const totalCap = b.condCapacity + b.silicaCapacity;
+        const warnMol = Number((totalCap * 0.90).toFixed(2));
+        const stopMol = Number((totalCap * 0.95).toFixed(2));
         const lastRow = b.rows[b.rows.length - 1];
         const stop95 = b.predictedStop95Volume ?? (lastRow ? lastRow.predictedCycle : 0);
-        const warn90 = b.predictedWarning90Volume ?? (stop95 > 0 ? Number(((stop95 * 90) / 95).toFixed(3)) : 0);
+        const warn90 =
+          b.predictedWarning90Volume ??
+          (stop95 > 0 && stopMol > 0 ? Number(((stop95 * warnMol) / stopMol).toFixed(3)) : 0);
         return {
           batchName: b.batchName,
           train: b.train || 'A',
           estimateMaximumConductivityCapacityMol: b.condCapacity,
           estimateMaximumSilicaCapacityMol: b.silicaCapacity,
           totalResinCapacityMol: Number(totalCap.toFixed(3)),
-          warning90ThresholdMol: Number((totalCap * 0.90).toFixed(3)),
-          stop95ThresholdMol: Number((totalCap * 0.95).toFixed(3)),
+          warning90ThresholdMol: warnMol,
+          stop95ThresholdMol: stopMol,
           rowCount: b.rows.length,
           summary: {
             currentWaterVolumeM3: lastRow ? lastRow.cycleEnd : 0,
@@ -252,10 +256,13 @@ export function exportBatchesToFile(
 
     batches.forEach((b, bIdx) => {
       const totalCap = b.condCapacity + b.silicaCapacity;
+      const warnMol = Number((totalCap * 0.90).toFixed(2));
+      const stopMol = Number((totalCap * 0.95).toFixed(2));
       const lastRow = b.rows[b.rows.length - 1];
       const stop95 = b.predictedStop95Volume ?? (lastRow ? lastRow.predictedCycle : 0);
       const warn90 =
-        b.predictedWarning90Volume ?? (stop95 > 0 ? Number(((stop95 * 90) / 95).toFixed(3)) : 0);
+        b.predictedWarning90Volume ??
+        (stop95 > 0 && stopMol > 0 ? Number(((stop95 * warnMol) / stopMol).toFixed(3)) : 0);
 
       lines.push(
         `[${bIdx + 1}] ${isTh ? 'ชุดข้อมูล (Batch)' : 'Batch'}: ${b.batchName} (Train ${
@@ -351,10 +358,13 @@ export function exportBatchesToFile(
           .slice(0, 28);
         const sheetName = escapeXml(rawSheetName || `Batch_${idx + 1}`);
         const totalCap = b.condCapacity + b.silicaCapacity;
+        const warnMol = Number((totalCap * 0.90).toFixed(2));
+        const stopMol = Number((totalCap * 0.95).toFixed(2));
         const lastRow = b.rows[b.rows.length - 1];
         const stop95 = b.predictedStop95Volume ?? (lastRow ? lastRow.predictedCycle : 0);
         const warn90 =
-          b.predictedWarning90Volume ?? (stop95 > 0 ? Number(((stop95 * 90) / 95).toFixed(3)) : 0);
+          b.predictedWarning90Volume ??
+          (stop95 > 0 && stopMol > 0 ? Number(((stop95 * warnMol) / stopMol).toFixed(3)) : 0);
 
         const colHeaders = [
           '#',
@@ -556,8 +566,13 @@ export function convertRecordsToExportPayloads(
 ): BatchExportPayload[] {
   return records.map((r) => {
     const norm = normalizeCycleRecordToBatch(r);
+    const cCap = norm.condCapacity || DEFAULT_COND_CAPACITY;
+    const sCap = norm.silicaCapacity || DEFAULT_SILICA_CAPACITY;
+    const totalCap = cCap + sCap;
+    const warnMol = Number((totalCap * 0.90).toFixed(2));
+    const stopMol = Number((totalCap * 0.95).toFixed(2));
     const stop95 = norm.predictedCycle;
-    const warn90 = stop95 > 0 ? Number(((stop95 * 90) / 95).toFixed(3)) : 0;
+    const warn90 = stop95 > 0 && stopMol > 0 ? Number(((stop95 * warnMol) / stopMol).toFixed(3)) : 0;
     return {
       batchName: norm.batchName,
       train: norm.train || 'A',

@@ -415,6 +415,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
   const [isBatchBrowserOpen, setIsBatchBrowserOpen] = useState(false);
   // Default formula display hidden (false) as requested
   const [showFormulaDetails, setShowFormulaDetails] = useState<boolean>(false);
+  const [showPredictionFormulas, setShowPredictionFormulas] = useState<boolean>(true);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -668,136 +669,19 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     return processedCycles.filter((r) => isNonPhysicalCycleRow(r));
   }, [processedCycles]);
 
-  // Threshold Control Analysis (90% System Warning & 95% System Stop) — Computed only from added rows
-  const thresholdAnalysis = useMemo(() => {
-    const activeRows = processedCycles;
-
-    if (activeRows.length === 0) {
-      return {
-        checkpoint90: {
-          targetPct: 90,
-          targetMol: Number((0.9 * totalCap).toFixed(3)),
-          interpolatedVolume: 0,
-          lastSafeRow: null,
-          firstReachedRow: null,
-          safeVolumeBeforeThreshold: 0,
-          safeCycleCount: 0,
-          isReached: false,
-          remainingVolume: 0,
-        },
-        checkpoint95: {
-          targetPct: 95,
-          targetMol: Number((0.95 * totalCap).toFixed(3)),
-          interpolatedVolume: 0,
-          lastSafeRow: null,
-          firstReachedRow: null,
-          safeVolumeBeforeThreshold: 0,
-          safeCycleCount: 0,
-          isReached: false,
-          remainingVolume: 0,
-        },
-        currentZone: 'normal' as const,
-        finalGoverningPct: 0,
-      };
-    }
-
-    const n = activeRows.length;
-    const deltaCombinedPcts = activeRows.map((r, i) =>
-      Math.max(0, r.combinedPercentLoad - (i === 0 ? 0 : activeRows[i - 1].combinedPercentLoad))
-    );
-    const stepRatesPctPerM3 = activeRows.map((r, i) =>
-      r.distance > 0 ? deltaCombinedPcts[i] / r.distance : 0
-    );
-
-    const mean = (arr: number[]) => (arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
-    const meanDeltaPct = mean(deltaCombinedPcts);
-    const meanRatePctPerM3 = mean(stepRatesPctPerM3);
-
-    const totalVolume = activeRows[n - 1].cycleEnd;
-    const finalCombinedPct = activeRows[n - 1].combinedPercentLoad;
-    const finalSilicaPct = activeRows[n - 1].silicaPercentLoad;
-    const finalGoverningPct = Math.max(finalCombinedPct, finalSilicaPct);
-    const overallRatePctPerM3 =
-      totalVolume > 0 && finalCombinedPct > 0 ? finalCombinedPct / totalVolume : meanRatePctPerM3;
-
-    const findThresholdPoint = (targetPct: number) => {
-      const idx = activeRows.findIndex((r) => r.combinedPercentLoad >= targetPct);
-      const lastSafeIdx = activeRows.reduce(
-        (acc, r, i) => (r.combinedPercentLoad <= targetPct && r.silicaPercentLoad <= targetPct ? i : acc),
-        -1
-      );
-      const lastSafeRow = lastSafeIdx >= 0 ? activeRows[lastSafeIdx] : null;
-      const firstReachedRow = idx >= 0 ? activeRows[idx] : null;
-
-      let interpolatedVolume = overallRatePctPerM3 > 0 ? targetPct / overallRatePctPerM3 : 0;
-      if (idx > 0) {
-        const prev = activeRows[idx - 1];
-        const curr = activeRows[idx];
-        const dPct = curr.combinedPercentLoad - prev.combinedPercentLoad;
-        if (dPct > 0 && prev.combinedPercentLoad <= targetPct) {
-          const frac = (targetPct - prev.combinedPercentLoad) / dPct;
-          interpolatedVolume = prev.cycleEnd + frac * (curr.cycleEnd - prev.cycleEnd);
-        }
-      } else if (idx === 0 && activeRows[0].combinedPercentLoad > 0) {
-        interpolatedVolume =
-          (targetPct / activeRows[0].combinedPercentLoad) * activeRows[0].cycleEnd;
-      }
-
-      const estimatedCycles =
-        firstReachedRow && lastSafeRow
-          ? lastSafeRow.step
-          : meanDeltaPct > 0
-          ? Math.max(1, Math.floor(targetPct / meanDeltaPct))
-          : n;
-
-      return {
-        targetPct,
-        targetMol: Number(((targetPct / 100) * totalCap).toFixed(3)),
-        interpolatedVolume: Number(Math.max(0, interpolatedVolume).toFixed(3)),
-        lastSafeRow,
-        firstReachedRow,
-        safeVolumeBeforeThreshold: lastSafeRow
-          ? lastSafeRow.cycleEnd
-          : Number(Math.max(0, interpolatedVolume).toFixed(3)),
-        safeCycleCount: lastSafeRow ? lastSafeRow.step : estimatedCycles,
-        isReached: finalCombinedPct >= targetPct || finalSilicaPct >= targetPct,
-        remainingVolume: Math.max(0, interpolatedVolume - totalVolume),
-      };
-    };
-
-    const checkpoint90 = findThresholdPoint(90);
-    const checkpoint95 = findThresholdPoint(95);
-
-    const lastActive = activeRows[n - 1];
-    const currentZone: 'normal' | 'warn90' | 'stop95' | 'breakthrough' =
-      finalGoverningPct >= 100 || lastActive.condOut >= 0.1 || lastActive.silicaOut >= 10
-        ? 'breakthrough'
-        : finalGoverningPct >= 95
-        ? 'stop95'
-        : finalGoverningPct >= 90
-        ? 'warn90'
-        : 'normal';
-
-    return {
-      checkpoint90,
-      checkpoint95,
-      currentZone,
-      finalGoverningPct,
-    };
-  }, [processedCycles, totalCap]);
-
   // Number formatter for weighted-average prediction values ('—' when not computable)
   const fmtNum = (v: number | null | undefined, digits: number) =>
     v === null || v === undefined || !Number.isFinite(v)
       ? '—'
       : v.toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 
-  // Weighted-Average Cycle Prediction
+  // Weighted-Average Cycle Prediction (Used system-wide for 90% Warning & 95% Stop)
   //   ΔSilica (mol/m³) = Silica Inlet (mol/m³) − Silica Outlet (mol/m³)
   //   ΔCond.  (mol/m³) = Cond. Inlet (mol/m³) − Cond. Outlet (mol/m³)
-  //   Weighted Average = Σ(ΔV × Δ) ÷ Σ(ΔV)  (cumulative from step 1 to current step)
-  //   90% Warning (m³) = (Capacity × 0.90) ÷ (WA Silica + WA Cond.)   → Train A: 71.63 mol
-  //   95% Stop    (m³) = (Capacity × 0.95) ÷ (WA Silica + WA Cond.)   → Train A: 75.61 mol
+  //   Weighted Average of Silica = Σ(ΔV × ΔSilica) ÷ Σ(ΔV)
+  //   Weighted Average of Cond.  = Σ(ΔV × ΔCond.) ÷ Σ(ΔV)
+  //   90% Warning (m³) = (Capacity × 0.90) ÷ (Weighted Average Silica + Weighted Average Cond.) → Train A: 71.63 mol
+  //   95% Stop    (m³) = (Capacity × 0.95) ÷ (Weighted Average Silica + Weighted Average Cond.) → Train A: 75.61 mol
   const weightedPrediction = useMemo(() => {
     const warnMol = Number((totalCap * 0.9).toFixed(2));
     const stopMol = Number((totalCap * 0.95).toFixed(2));
@@ -872,9 +756,107 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
       stopMol,
       warnVolume: canDivide ? warnMol / (denominator as number) : null,
       stopVolume: canDivide ? stopMol / (denominator as number) : null,
+      breakthroughVolume: canDivide ? totalCap / (denominator as number) : null,
       invalidCount,
     };
   }, [processedCycles, totalCap, isTh]);
+
+  // Threshold Control Analysis (90% System Warning & 95% System Stop) — Uses Weighted Average formula across entire system
+  const thresholdAnalysis = useMemo(() => {
+    const activeRows = processedCycles;
+
+    if (activeRows.length === 0) {
+      return {
+        checkpoint90: {
+          targetPct: 90,
+          targetMol: weightedPrediction.warnMol,
+          interpolatedVolume: 0,
+          lastSafeRow: null,
+          firstReachedRow: null,
+          safeVolumeBeforeThreshold: 0,
+          safeCycleCount: 0,
+          isReached: false,
+          remainingVolume: 0,
+        },
+        checkpoint95: {
+          targetPct: 95,
+          targetMol: weightedPrediction.stopMol,
+          interpolatedVolume: 0,
+          lastSafeRow: null,
+          firstReachedRow: null,
+          safeVolumeBeforeThreshold: 0,
+          safeCycleCount: 0,
+          isReached: false,
+          remainingVolume: 0,
+        },
+        currentZone: 'normal' as const,
+        finalGoverningPct: 0,
+      };
+    }
+
+    const n = activeRows.length;
+    const deltaCombinedPcts = activeRows.map((r, i) =>
+      Math.max(0, r.combinedPercentLoad - (i === 0 ? 0 : activeRows[i - 1].combinedPercentLoad))
+    );
+    const mean = (arr: number[]) => (arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
+    const meanDeltaPct = mean(deltaCombinedPcts);
+
+    const totalVolume = activeRows[n - 1].cycleEnd;
+    const finalCombinedPct = activeRows[n - 1].combinedPercentLoad;
+    const finalSilicaPct = activeRows[n - 1].silicaPercentLoad;
+    const finalGoverningPct = Math.max(finalCombinedPct, finalSilicaPct);
+
+    const buildThresholdPoint = (targetPct: 90 | 95, targetMol: number, predictedVol: number | null) => {
+      const idx = activeRows.findIndex((r) => r.combinedPercentLoad >= targetPct);
+      const lastSafeIdx = activeRows.reduce(
+        (acc, r, i) => (r.combinedPercentLoad <= targetPct && r.silicaPercentLoad <= targetPct ? i : acc),
+        -1
+      );
+      const lastSafeRow = lastSafeIdx >= 0 ? activeRows[lastSafeIdx] : null;
+      const firstReachedRow = idx >= 0 ? activeRows[idx] : null;
+
+      const volumeFromWA = predictedVol !== null && Number.isFinite(predictedVol) ? Math.max(0, predictedVol) : 0;
+
+      const estimatedCycles =
+        firstReachedRow && lastSafeRow
+          ? lastSafeRow.step
+          : meanDeltaPct > 0
+          ? Math.max(1, Math.floor(targetPct / meanDeltaPct))
+          : n;
+
+      return {
+        targetPct,
+        targetMol,
+        interpolatedVolume: Number(volumeFromWA.toFixed(3)),
+        lastSafeRow,
+        firstReachedRow,
+        safeVolumeBeforeThreshold: lastSafeRow ? lastSafeRow.cycleEnd : Number(volumeFromWA.toFixed(3)),
+        safeCycleCount: lastSafeRow ? lastSafeRow.step : estimatedCycles,
+        isReached: finalCombinedPct >= targetPct || finalSilicaPct >= targetPct,
+        remainingVolume: Math.max(0, volumeFromWA - totalVolume),
+      };
+    };
+
+    const checkpoint90 = buildThresholdPoint(90, weightedPrediction.warnMol, weightedPrediction.warnVolume);
+    const checkpoint95 = buildThresholdPoint(95, weightedPrediction.stopMol, weightedPrediction.stopVolume);
+
+    const lastActive = activeRows[n - 1];
+    const currentZone: 'normal' | 'warn90' | 'stop95' | 'breakthrough' =
+      finalGoverningPct >= 100 || lastActive.condOut >= 0.1 || lastActive.silicaOut >= 10
+        ? 'breakthrough'
+        : finalGoverningPct >= 95
+        ? 'stop95'
+        : finalGoverningPct >= 90
+        ? 'warn90'
+        : 'normal';
+
+    return {
+      checkpoint90,
+      checkpoint95,
+      currentZone,
+      finalGoverningPct,
+    };
+  }, [processedCycles, weightedPrediction]);
 
   const plantSummary = useMemo(() => {
     if (!lastCycle) {
@@ -886,6 +868,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
         currentCombinedIonLoad: 0,
         currentCondIonLoad: 0,
         currentSilicaIonLoad: 0,
+        predictedWarningVolume: 0,
         predictedCutoffVolume: 0,
         predictedBreakthroughVolume: 0,
         predictedSilicaCutoffVolume: 0,
@@ -901,8 +884,14 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     const currentSilicaPercent = activeBatchCalc.silicaPercentLoad;
     const currentCondPercent = activeBatchCalc.condPercentLoad;
 
-    const predictedCutoffVolume = activeBatchCalc.predictedCycle;
-    const predictedBreakthroughVolume = activeBatchCalc.predictedBreakthrough;
+    const predictedWarningVolume =
+      weightedPrediction.warnVolume !== null ? Number(weightedPrediction.warnVolume.toFixed(3)) : 0;
+    const predictedCutoffVolume =
+      weightedPrediction.stopVolume !== null ? Number(weightedPrediction.stopVolume.toFixed(3)) : 0;
+    const predictedBreakthroughVolume =
+      weightedPrediction.breakthroughVolume !== null
+        ? Number(weightedPrediction.breakthroughVolume.toFixed(3))
+        : activeBatchCalc.predictedBreakthrough;
     const predictedSilicaCutoffVolume = activeBatchCalc.predictedSilicaCutoffCycle;
     const remainingVolumeTo98 = Math.max(0, predictedCutoffVolume - totalVolume);
 
@@ -914,6 +903,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
       currentCombinedIonLoad: activeBatchCalc.totalCombinedIonLoad,
       currentCondIonLoad: activeBatchCalc.cumulativeIonLoad,
       currentSilicaIonLoad: activeBatchCalc.cumulativeSilicaLoad,
+      predictedWarningVolume,
       predictedCutoffVolume,
       predictedBreakthroughVolume,
       predictedSilicaCutoffVolume,
@@ -922,7 +912,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
       maxSafeRowWithin98: activeBatchCalc.maxSafeRowWithin98,
       firstCutoffRowAbove98: activeBatchCalc.firstCutoffRowAbove98,
     };
-  }, [lastCycle, activeBatchCalc]);
+  }, [lastCycle, activeBatchCalc, weightedPrediction]);
 
   const hasCycleData = processedCycles.length > 0;
 
@@ -2494,6 +2484,27 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       </div>
                     </div>
                   </div>
+
+                  {/* การคำนวณจุดแจ้งเตือนและจุดหยุดระบบ (Weighted Average) */}
+                  <div className="p-3.5 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-2">
+                    <div className="text-xs sm:text-sm font-bold text-[var(--accent)] font-sans">
+                      {isTh
+                        ? 'สูตรการคำนวณจุดแจ้งเตือนระบบ (90%) และจุดหยุดระบบ (95%)'
+                        : 'System Warning (90%) & System Stop (95%) Formulas'}
+                    </div>
+                    <div className="space-y-1 text-xs font-mono text-[var(--ink-soft)] leading-relaxed">
+                      <div>• ΔSilica (mol/m³) = Silica Inlet (mol/m³) − Silica Outlet (mol/m³)</div>
+                      <div>• Weighted Average of Silica = Σ(ΔV × ΔSilica) ÷ Σ(ΔV)</div>
+                      <div>• ΔCond. (mol/m³) = Cond. Inlet (mol/m³) − Cond. Outlet (mol/m³)</div>
+                      <div>• Weighted Average of Cond. = Σ(ΔV × ΔCond.) ÷ Σ(ΔV)</div>
+                      <div className="text-amber-600 dark:text-amber-400 font-semibold">
+                        • {isTh ? 'จุดแจ้งเตือนระบบ (90%)' : 'System Warning (90%)'} = {fmtNum(weightedPrediction.warnMol, 2)} mol ÷ (Weighted Average Silica + Weighted Average Cond.)
+                      </div>
+                      <div className="text-rose-600 dark:text-rose-400 font-semibold">
+                        • {isTh ? 'จุดหยุดระบบ (95%)' : 'System Stop (95%)'} = {fmtNum(weightedPrediction.stopMol, 2)} mol ÷ (Weighted Average Silica + Weighted Average Cond.)
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </motion.div>
             )}
@@ -2874,7 +2885,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       </th>
                       <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
                         <div className="leading-snug">
-                          <div className="text-[13px] font-bold text-indigo-700 dark:text-indigo-300">Weighted Average of Silica</div>
+                          <div className="text-[13px] font-bold text-indigo-700 dark:text-indigo-300">Avg Silica</div>
                           <div className="text-[11px] font-mono font-semibold text-indigo-600/90 dark:text-indigo-300/90">(mol/m³)</div>
                         </div>
                       </th>
@@ -2946,7 +2957,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       </th>
                       <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
                         <div className="leading-snug">
-                          <div className="text-[13px] font-bold text-sky-700 dark:text-sky-300">Weighted Average of Cond.</div>
+                          <div className="text-[13px] font-bold text-sky-700 dark:text-sky-300">Avg Cond.</div>
                           <div className="text-[11px] font-mono font-semibold text-sky-600/90 dark:text-sky-300/90">(mol/m³)</div>
                         </div>
                       </th>
@@ -2980,11 +2991,11 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                         { title: 'Silica Inlet', unit: '(mol/m³)', tone: '' },
                         { title: 'Silica Outlet', unit: '(mol/m³)', tone: '' },
                         { title: 'ΔSilica', unit: '(mol/m³)', tone: '' },
-                        { title: 'Weighted Average of Silica', unit: '(mol/m³)', tone: 'silica' },
+                        { title: 'Avg Silica', unit: '(mol/m³)', tone: 'silica' },
                         { title: 'Cond. Inlet', unit: '(mol/m³)', tone: '' },
                         { title: 'Cond. Outlet', unit: '(mol/m³)', tone: '' },
                         { title: 'ΔCond.', unit: '(mol/m³)', tone: '' },
-                        { title: 'Weighted Average of Cond.', unit: '(mol/m³)', tone: 'cond' },
+                        { title: 'Avg Cond.', unit: '(mol/m³)', tone: 'cond' },
                       ].map((h) => (
                         <th key={h.title} className="py-2.5 px-2.5 text-right whitespace-nowrap">
                           <div className="leading-snug">
@@ -3179,25 +3190,59 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
 
           {/* Weighted-Average Prediction: 90% System Warning & 95% System Stop */}
           <div className="p-4 rounded-xl border border-[var(--line)] bg-[var(--bg)]/60 space-y-3">
-            <div className="flex items-center gap-2">
-              <Sigma className="w-4 h-4 text-[var(--accent)] shrink-0" />
-              <h4 className="text-sm font-bold text-[var(--ink)]">
-                {isTh
-                  ? 'การคำนวณจุดแจ้งเตือนและจุดหยุดระบบ (Weighted Average)'
-                  : 'System Warning & Stop Point Calculation (Weighted Average)'}
-              </h4>
-            </div>
-            <div className="text-xs text-[var(--ink-soft)] font-mono leading-relaxed">
-              <div>Weighted Average = Σ(ΔV × ΔC) ÷ Σ(ΔV)</div>
-              <div>
-                {isTh ? 'จุดแจ้งเตือนระบบ (90%)' : 'System Warning (90%)'} = {fmtNum(weightedPrediction.warnMol, 2)} mol ÷
-                (WA Silica + WA Cond.)
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <Sigma className="w-4 h-4 text-[var(--accent)] shrink-0" />
+                <h4 className="text-sm font-bold text-[var(--ink)]">
+                  {isTh
+                    ? 'การคำนวณจุดแจ้งเตือนและจุดหยุดระบบ (Weighted Average)'
+                    : 'System Warning & Stop Point Calculation (Weighted Average)'}
+                </h4>
               </div>
-              <div>
-                {isTh ? 'จุดหยุดระบบ (95%)' : 'System Stop (95%)'} = {fmtNum(weightedPrediction.stopMol, 2)} mol ÷ (WA
-                Silica + WA Cond.)
-              </div>
+
+              <button
+                type="button"
+                onClick={() => setShowPredictionFormulas((prev) => !prev)}
+                className="text-xs text-[var(--accent)] font-semibold flex items-center gap-1 cursor-pointer px-2.5 py-1 rounded-lg bg-[var(--panel)] border border-[var(--line)] hover:bg-[var(--sidebar-hover)] transition-colors whitespace-nowrap"
+              >
+                <Info className="w-3.5 h-3.5" />
+                <span>
+                  {showPredictionFormulas
+                    ? isTh
+                      ? 'ซ่อนสูตรคำนวณ'
+                      : 'Hide Calculation Formulas'
+                    : isTh
+                    ? 'แสดงสูตรการคำนวณ'
+                    : 'Show Calculation Formulas'}
+                </span>
+                {showPredictionFormulas ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
             </div>
+
+            <AnimatePresence initial={false}>
+              {showPredictionFormulas && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.2, ease: [0.16, 1, 0.3, 1] }}
+                  className="overflow-hidden"
+                >
+                  <div className="p-3 rounded-lg bg-[var(--panel)] border border-[var(--line)] text-xs text-[var(--ink-soft)] font-mono leading-relaxed space-y-1">
+                    <div>• ΔSilica (mol/m³) = Silica Inlet (mol/m³) − Silica Outlet (mol/m³)</div>
+                    <div>• Weighted Average of Silica = Σ(ΔV × ΔSilica) ÷ Σ(ΔV)</div>
+                    <div>• ΔCond. (mol/m³) = Cond. Inlet (mol/m³) − Cond. Outlet (mol/m³)</div>
+                    <div>• Weighted Average of Cond. = Σ(ΔV × ΔCond.) ÷ Σ(ΔV)</div>
+                    <div className="text-amber-600 dark:text-amber-400 font-semibold">
+                      • {isTh ? 'จุดแจ้งเตือนระบบ (90%)' : 'System Warning (90%)'} = {fmtNum(weightedPrediction.warnMol, 2)} mol ÷ (Weighted Average Silica + Weighted Average Cond.)
+                    </div>
+                    <div className="text-rose-600 dark:text-rose-400 font-semibold">
+                      • {isTh ? 'จุดหยุดระบบ (95%)' : 'System Stop (95%)'} = {fmtNum(weightedPrediction.stopMol, 2)} mol ÷ (Weighted Average Silica + Weighted Average Cond.)
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
               <div className="p-3 rounded-lg bg-[var(--panel)] border border-[var(--line)]">
@@ -3216,7 +3261,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
               </div>
               <div className="p-3 rounded-lg bg-[var(--panel)] border border-[var(--line)]">
                 <div className="text-xs font-semibold text-[var(--ink-soft)]">
-                  {isTh ? 'ตัวหาร (WA Silica + WA Cond.)' : 'Divisor (WA Silica + WA Cond.)'}
+                  {isTh
+                    ? 'ตัวหาร (Weighted Average Silica + Weighted Average Cond.)'
+                    : 'Divisor (Weighted Average Silica + Weighted Average Cond.)'}
                 </div>
                 <div className="text-base font-bold font-mono tabular-nums text-[var(--ink)]">
                   {fmtNum(weightedPrediction.denominator, 6)}{' '}
@@ -3263,8 +3310,8 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       ? 'ยังคำนวณจุดแจ้งเตือนและจุดหยุดระบบไม่ได้: ไม่มีแถวข้อมูลที่ถูกต้อง (Σ(ΔV) = 0) กรุณาตรวจสอบว่า Cycle เพิ่มขึ้นทุกรอบ และค่า Outlet ไม่มากกว่า Inlet'
                       : 'Cannot calculate warning/stop points: no valid rows (Σ(ΔV) = 0). Check that Cycle increases every step and Outlet does not exceed Inlet.'
                     : isTh
-                    ? 'ยังคำนวณจุดแจ้งเตือนและจุดหยุดระบบไม่ได้: ตัวหาร (WA Silica + WA Cond.) เท่ากับศูนย์ เพราะค่า Inlet เท่ากับ Outlet ทุกแถว'
-                    : 'Cannot calculate warning/stop points: the divisor (WA Silica + WA Cond.) is zero because Inlet equals Outlet in every row.'}
+                    ? 'ยังคำนวณจุดแจ้งเตือนและจุดหยุดระบบไม่ได้: ตัวหาร (Weighted Average Silica + Weighted Average Cond.) เท่ากับศูนย์ เพราะค่า Inlet เท่ากับ Outlet ทุกแถว'
+                    : 'Cannot calculate warning/stop points: the divisor (Weighted Average Silica + Weighted Average Cond.) is zero because Inlet equals Outlet in every row.'}
                 </span>
               </div>
             )}
@@ -3321,24 +3368,22 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                     : `Normal Operation (< 90%): Within 90% Warning (${thresholdAnalysis.checkpoint90.targetMol.toFixed(2)} mol) & 95% System Stop (${thresholdAnalysis.checkpoint95.targetMol.toFixed(2)} mol)`}
                 </div>
                 <div className="text-xs opacity-90">
-                  {plantSummary.maxSafeRowWithin98 ? (
+                  {!weightedPrediction.canDivide ? (
+                    <span>
+                      {isTh
+                        ? 'ยังไม่สามารถคำนวณจุดแจ้งเตือนระบบ (90%) และจุดหยุดระบบ (95%) ได้ เนื่องจากตัวหารเท่ากับศูนย์'
+                        : 'Cannot calculate 90% warning and 95% stop points because the divisor is zero.'}
+                    </span>
+                  ) : plantSummary.maxSafeRowWithin98 ? (
                     isTh ? (
                       <>
                         จุดแจ้งเตือนระบบ 90% ={' '}
                         <strong className="text-amber-500">
-                          {thresholdAnalysis.checkpoint90.interpolatedVolume.toLocaleString('en-US', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}{' '}
-                          m³
+                          {fmtNum(weightedPrediction.warnVolume, 2)} m³
                         </strong>{' '}
                         · จุดหยุดระบบ 95% ={' '}
                         <strong className="text-rose-500">
-                          {plantSummary.predictedCutoffVolume.toLocaleString('en-US', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}{' '}
-                          m³
+                          {fmtNum(weightedPrediction.stopVolume, 2)} m³
                         </strong>{' '}
                         (ผลิตได้สูงสุดก่อนหยุดระบบ <strong>{plantSummary.maxSafeRowWithin98.step} Cycle</strong> ·{' '}
                         <strong>
@@ -3354,27 +3399,19 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                       <>
                         90% System Warning:{' '}
                         <strong className="text-amber-500">
-                          {thresholdAnalysis.checkpoint90.interpolatedVolume.toLocaleString('en-US', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}{' '}
-                          m³
+                          {fmtNum(weightedPrediction.warnVolume, 2)} m³
                         </strong>{' '}
                         · 95% System Stop:{' '}
                         <strong className="text-rose-500">
-                          {plantSummary.predictedCutoffVolume.toLocaleString('en-US', {
-                            minimumFractionDigits: 2,
-                            maximumFractionDigits: 2,
-                          })}{' '}
-                          m³
+                          {fmtNum(weightedPrediction.stopVolume, 2)} m³
                         </strong>
                       </>
                     )
                   ) : (
                     <span>
                       {isTh
-                        ? `คาดการณ์จุดแจ้งเตือนระบบ 90%: ${thresholdAnalysis.checkpoint90.interpolatedVolume.toFixed(2)} m³ · จุดหยุดระบบ 95%: ${plantSummary.predictedCutoffVolume.toFixed(2)} m³`
-                        : `Predicted 90% Warning: ${thresholdAnalysis.checkpoint90.interpolatedVolume.toFixed(2)} m³ · 95% System Stop: ${plantSummary.predictedCutoffVolume.toFixed(2)} m³`}
+                        ? `คาดการณ์จุดแจ้งเตือนระบบ 90%: ${fmtNum(weightedPrediction.warnVolume, 2)} m³ · จุดหยุดระบบ 95%: ${fmtNum(weightedPrediction.stopVolume, 2)} m³`
+                        : `Predicted 90% Warning: ${fmtNum(weightedPrediction.warnVolume, 2)} m³ · 95% System Stop: ${fmtNum(weightedPrediction.stopVolume, 2)} m³`}
                     </span>
                   )}
                 </div>
@@ -3384,9 +3421,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
             <div className="flex items-center gap-2 shrink-0 font-mono text-xs font-bold px-3 py-1.5 rounded-xl bg-[var(--panel)] border border-[var(--line)] text-[var(--ink)] self-start md:self-center">
               <span>Load: {plantSummary.currentCombinedPercent.toFixed(2)}%</span>
               <span className="text-[var(--ink-soft)]">|</span>
-              <span className="text-amber-500">90%: {thresholdAnalysis.checkpoint90.interpolatedVolume.toFixed(1)} m³</span>
+              <span className="text-amber-500">90%: {fmtNum(weightedPrediction.warnVolume, 2)} m³</span>
               <span className="text-[var(--ink-soft)]">|</span>
-              <span className="text-rose-500">95%: {plantSummary.predictedCutoffVolume.toFixed(1)} m³</span>
+              <span className="text-rose-500">95%: {fmtNum(weightedPrediction.stopVolume, 2)} m³</span>
             </div>
           </div>
 
@@ -3425,14 +3462,15 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 <BellRing className="w-3.5 h-3.5 text-amber-500 shrink-0" />
               </div>
               <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-amber-500 dark:text-amber-400 whitespace-nowrap">
-                {thresholdAnalysis.checkpoint90.interpolatedVolume.toLocaleString('en-US', {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}{' '}
+                {fmtNum(weightedPrediction.warnVolume, 2)}{' '}
                 <span className="text-xs font-normal text-[var(--ink-soft)]">m³</span>
               </div>
               <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)] truncate">
-                {thresholdAnalysis.checkpoint90.firstReachedRow
+                {!weightedPrediction.canDivide
+                  ? isTh
+                    ? 'ตัวหารเป็นศูนย์ (ไม่สามารถคำนวณได้)'
+                    : 'Divisor is zero (cannot calculate)'
+                  : thresholdAnalysis.checkpoint90.firstReachedRow
                   ? isTh
                     ? `ถึงเกณฑ์ที่ รอบที่ ${thresholdAnalysis.checkpoint90.firstReachedRow.step} (${thresholdAnalysis.checkpoint90.firstReachedRow.cycleEnd.toFixed(2)} m³)`
                     : `Reached at Step #${thresholdAnalysis.checkpoint90.firstReachedRow.step}`
@@ -3449,14 +3487,15 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 <OctagonAlert className="w-3.5 h-3.5 text-rose-500 shrink-0" />
               </div>
               <div className="text-lg sm:text-xl font-bold font-mono tabular-nums text-rose-600 dark:text-rose-400 whitespace-nowrap">
-                {plantSummary.predictedCutoffVolume.toLocaleString('en-US', {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}{' '}
+                {fmtNum(weightedPrediction.stopVolume, 2)}{' '}
                 <span className="text-xs font-normal text-[var(--ink-soft)]">m³</span>
               </div>
               <div className="text-xs font-mono tabular-nums text-[var(--ink-soft)] truncate">
-                {plantSummary.firstCutoffRowAbove98
+                {!weightedPrediction.canDivide
+                  ? isTh
+                    ? 'ตัวหารเป็นศูนย์ (ไม่สามารถคำนวณได้)'
+                    : 'Divisor is zero (cannot calculate)'
+                  : plantSummary.firstCutoffRowAbove98
                   ? isTh
                     ? `ถึงเกณฑ์ที่ รอบที่ ${plantSummary.firstCutoffRowAbove98.step} (${plantSummary.firstCutoffRowAbove98.cycleEnd.toFixed(2)} m³)`
                     : `Reached at Step #${plantSummary.firstCutoffRowAbove98.step} (${plantSummary.firstCutoffRowAbove98.cycleEnd.toFixed(2)} m³)`
@@ -3587,11 +3626,11 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                     </span>
                     <span>
                       {isTh ? 'จุดแจ้งเตือนระบบ 90%: ' : '90% Warning: '}
-                      <strong className="text-amber-500">{thresholdAnalysis.checkpoint90.interpolatedVolume.toFixed(2)} m³</strong>
+                      <strong className="text-amber-500">{fmtNum(weightedPrediction.warnVolume, 2)} m³</strong>
                     </span>
                     <span>
                       {isTh ? 'จุดหยุดระบบ 95%: ' : '95% Stop: '}
-                      <strong className="text-rose-500">{plantSummary.predictedCutoffVolume.toFixed(2)} m³</strong>
+                      <strong className="text-rose-500">{fmtNum(weightedPrediction.stopVolume, 2)} m³</strong>
                     </span>
                   </div>
                 </div>

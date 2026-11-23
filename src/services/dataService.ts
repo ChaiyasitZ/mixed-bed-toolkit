@@ -156,6 +156,7 @@ export interface BatchCalculationResult {
   combinedPercentLoad: number;
   percentLoad: number;
   predictedCycle: number; // Predicted 95% System Stop Volume (m³)
+  predictedWarning90?: number; // Predicted 90% System Warning Volume (m³)
   predictedBreakthrough: number; // Predicted 100% Breakthrough Volume (m³)
   predictedSilicaCutoffCycle: number; // Predicted 95% System Stop Volume based on Silica
   predictedCondCutoffCycle: number; // Predicted 95% System Stop Volume based on Cond
@@ -206,7 +207,9 @@ export function recalculateBatchRows(
 ): BatchCalculationResult {
   const cCap = condCapacity > 0 ? condCapacity : DEFAULT_COND_CAPACITY;
   const sCap = silicaCapacity > 0 ? silicaCapacity : DEFAULT_SILICA_CAPACITY;
-  const totalCap = Number((cCap + sCap).toFixed(4)); // Default: 74 + 5.7 = 79.7 mol
+  const totalCap = Number((cCap + sCap).toFixed(4)); // Default Train A: 73.91 + 5.68 = 79.59 mol
+  const warnMol = Number((totalCap * 0.9).toFixed(2)); // Default Train A: 71.63 mol
+  const stopMol = Number((totalCap * 0.95).toFixed(2)); // Default Train A: 75.61 mol
 
   if (!rawInputs || rawInputs.length === 0) {
     return {
@@ -230,11 +233,12 @@ export function recalculateBatchRows(
       totalCombinedIonLoad: 0,
       combinedPercentLoad: 0,
       percentLoad: 0,
-      predictedCycle: 1700,
-      predictedBreakthrough: 1735,
-      predictedSilicaCutoffCycle: 1700,
-      predictedCondCutoffCycle: 1700,
-      predictedTotalCycleCount98: 15,
+      predictedCycle: 0,
+      predictedWarning90: 0,
+      predictedBreakthrough: 0,
+      predictedSilicaCutoffCycle: 0,
+      predictedCondCutoffCycle: 0,
+      predictedTotalCycleCount98: 0,
       maxSafeRowWithin98: null,
       firstCutoffRowAbove98: null,
     };
@@ -246,6 +250,9 @@ export function recalculateBatchRows(
 
   let cumulativeCondLoad = 0;
   let cumulativeSilicaLoad = 0;
+  let sumDV = 0;
+  let sumDVxDSilica = 0;
+  let sumDVxDCond = 0;
 
   const computedRows: CycleRowItem[] = ordered.map((item, idx) => {
     const step = idx + 1;
@@ -266,9 +273,6 @@ export function recalculateBatchRows(
     const condPercentLoad = (cumulativeCondLoad / cCap) * 100;
 
     // Silica calculations (SiO2: 60.08 g/mol)
-    // Step 1: Conc MB Inlet (mol/L) = (Silica MB Inlet ppb / 1,000,000) / 60.08 ; (mol/m³) = (mol/L) * 1000
-    // Step 2: Conc MB Outlet (mol/L) = (Silica MB Outlet ppb / 1,000,000) / 60.08 ; (mol/m³) = (mol/L) * 1000
-    // Step 3: Ion Concentration ที่หายไป (mol) = (Conc In (mol/m³) - Conc Out (mol/m³)) * ระยะห่าง Cycle (m³)
     const silicaIn = item.silicaIn !== undefined ? Number(item.silicaIn) : 185.3;
     const silicaOut = item.silicaOut !== undefined ? Number(item.silicaOut) : 1.0;
     const silicaConcInMolL = silicaIn / 1_000_000 / MOLAR_MASS_SIO2;
@@ -286,18 +290,26 @@ export function recalculateBatchRows(
     const totalCombinedIonLoad = cumulativeCondLoad + cumulativeSilicaLoad;
 
     // Step 5: Percent Load on Resin (%)
-    // Silica Percent Load = (Ion Load Silica / 5.7) * 100
-    // Combined Percent Load = (Ion Load (Cond + Silica) / 79.7) * 100
     const silicaPercentLoad = (cumulativeSilicaLoad / sCap) * 100;
     const combinedPercentLoad = (totalCombinedIonLoad / totalCap) * 100;
 
-    // Step 6: Predict Cycle volume at 95% system stop using Combined Ion Load (Cond + Silica)
-    const avgCombinedRatePerM3 =
-      cycleEnd > 0 && totalCombinedIonLoad > 0
-        ? totalCombinedIonLoad / cycleEnd
-        : Math.max(0, netCondConc + netSilicaConc);
-    const predictedCycle =
-      avgCombinedRatePerM3 > 0 ? (totalCap * 0.95) / avgCombinedRatePerM3 : 1700;
+    // Cumulative Weighted Average up to current step (over valid rows)
+    const isValidForWA =
+      [cycleEnd, condIn, condOut, silicaIn, silicaOut].every((v) => Number.isFinite(v) && v >= 0) &&
+      distance > 0 &&
+      netCondConc >= 0 &&
+      netSilicaConc >= 0;
+
+    if (isValidForWA) {
+      sumDV += distance;
+      sumDVxDSilica += distance * netSilicaConc;
+      sumDVxDCond += distance * netCondConc;
+    }
+
+    const rowWaSilica = sumDV > 0 ? sumDVxDSilica / sumDV : 0;
+    const rowWaCond = sumDV > 0 ? sumDVxDCond / sumDV : 0;
+    const rowDenom = rowWaSilica + rowWaCond;
+    const predictedCycle = sumDV > 0 && Number.isFinite(rowDenom) && rowDenom > 1e-12 ? stopMol / rowDenom : 0;
 
     const cleanLabel =
       item.label && item.label.trim()
@@ -349,42 +361,24 @@ export function recalculateBatchRows(
     computedRows.reduce((sum, r) => sum + r.silicaIn, 0) / computedRows.length
   );
   const totalVol = Math.max(0, lastRow.cycleEnd);
-  const totalCombined = lastRow.totalCombinedIonLoad;
-  const overallCombinedRate = totalVol > 0 && totalCombined > 0 ? totalCombined / totalVol : 0;
-  const overallSilicaRate =
-    totalVol > 0 && lastRow.cumulativeSilicaLoad > 0 ? lastRow.cumulativeSilicaLoad / totalVol : 0;
-  const overallCondRate =
-    totalVol > 0 && lastRow.cumulativeIonLoad > 0 ? lastRow.cumulativeIonLoad / totalVol : 0;
 
-  // Predicted 95% System Stop Volume (Combined Cond + Silica)
-  let predictedStop95 = overallCombinedRate > 0 ? (totalCap * 0.95) / overallCombinedRate : 1700;
-  const idx95 = computedRows.findIndex((r) => r.combinedPercentLoad > 95);
-  if (idx95 > 0) {
-    const prev = computedRows[idx95 - 1];
-    const curr = computedRows[idx95];
-    const deltaPct = curr.combinedPercentLoad - prev.combinedPercentLoad;
-    if (deltaPct > 0 && prev.combinedPercentLoad <= 95) {
-      const frac = (95 - prev.combinedPercentLoad) / deltaPct;
-      predictedStop95 = prev.cycleEnd + frac * (curr.cycleEnd - prev.cycleEnd);
-    }
-  }
+  // Weighted Average of Silica & Cond. across the batch:
+  //   Weighted Average = Σ(ΔV × ΔC) ÷ Σ(ΔV)
+  //   90% System Warning = warnMol ÷ (Weighted Average Silica + Weighted Average Cond.)
+  //   95% System Stop    = stopMol ÷ (Weighted Average Silica + Weighted Average Cond.)
+  const finalWaSilica = sumDV > 0 ? sumDVxDSilica / sumDV : 0;
+  const finalWaCond = sumDV > 0 ? sumDVxDCond / sumDV : 0;
+  const finalDenom = finalWaSilica + finalWaCond;
+  const canDivide = sumDV > 0 && Number.isFinite(finalDenom) && finalDenom > 1e-12;
 
-  let predictedBreakthrough100 = overallCombinedRate > 0 ? totalCap / overallCombinedRate : 1735;
-  const idx100 = computedRows.findIndex((r) => r.combinedPercentLoad >= 100);
-  if (idx100 > 0) {
-    const prev = computedRows[idx100 - 1];
-    const curr = computedRows[idx100];
-    const deltaPct = curr.combinedPercentLoad - prev.combinedPercentLoad;
-    if (deltaPct > 0 && prev.combinedPercentLoad <= 100) {
-      const frac = (100 - prev.combinedPercentLoad) / deltaPct;
-      predictedBreakthrough100 = prev.cycleEnd + frac * (curr.cycleEnd - prev.cycleEnd);
-    }
-  }
+  const predictedWarning90 = canDivide ? warnMol / finalDenom : 0;
+  const predictedStop95 = canDivide ? stopMol / finalDenom : 0;
+  const predictedBreakthrough100 = canDivide ? totalCap / finalDenom : 0;
 
   const predictedSilicaCutoffCycle =
-    overallSilicaRate > 0 ? (sCap * 0.95) / overallSilicaRate : 1700;
+    sumDV > 0 && finalWaSilica > 1e-12 ? Number((sCap * 0.95).toFixed(2)) / finalWaSilica : 0;
   const predictedCondCutoffCycle =
-    overallCondRate > 0 ? (cCap * 0.95) / overallCondRate : 1700;
+    sumDV > 0 && finalWaCond > 1e-12 ? Number((cCap * 0.95).toFixed(2)) / finalWaCond : 0;
 
   // Find maximum safe step still within <= 95% (both Combined and Silica) and first step exceeding 95%
   const safeRows = computedRows.filter(
@@ -401,7 +395,7 @@ export function recalculateBatchRows(
     ? maxSafeRowWithin98
       ? maxSafeRowWithin98.step
       : 1
-    : avgStepVol > 0
+    : avgStepVol > 0 && predictedStop95 > 0
     ? Math.max(computedRows.length, Math.floor(predictedStop95 / avgStepVol))
     : computedRows.length;
 
@@ -427,6 +421,7 @@ export function recalculateBatchRows(
     combinedPercentLoad: lastRow.combinedPercentLoad,
     percentLoad: lastRow.combinedPercentLoad,
     predictedCycle: Number(Math.max(0, predictedStop95).toFixed(3)),
+    predictedWarning90: Number(Math.max(0, predictedWarning90).toFixed(3)),
     predictedBreakthrough: Number(Math.max(0, predictedBreakthrough100).toFixed(3)),
     predictedSilicaCutoffCycle: Number(Math.max(0, predictedSilicaCutoffCycle).toFixed(3)),
     predictedCondCutoffCycle: Number(Math.max(0, predictedCondCutoffCycle).toFixed(3)),

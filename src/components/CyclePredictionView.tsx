@@ -28,6 +28,9 @@ import {
   OctagonAlert,
   BellRing,
   Droplets,
+  ArrowUpRight,
+  CornerDownLeft,
+  Sparkles,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -162,6 +165,31 @@ export const PLANT_TRAIN_B_BENCHMARK: CycleRowInput[] = [
 const WORKSPACE_DRAFT_KEY = 'mb_toolkit_cycle_workspace_draft_v10';
 
 type TrainId = 'A' | 'B';
+
+type FormulaTargetId =
+  | 'cond_dv'
+  | 'cond_in_mol_l'
+  | 'cond_in_mol_m3'
+  | 'cond_out_mol_l'
+  | 'cond_out_mol_m3'
+  | 'cond_delta'
+  | 'cond_wa'
+  | 'cond_removed'
+  | 'cond_cum_load'
+  | 'cond_pct_load'
+  | 'silica_dv'
+  | 'silica_in_mol_l'
+  | 'silica_in_mol_m3'
+  | 'silica_out_mol_l'
+  | 'silica_out_mol_m3'
+  | 'silica_delta'
+  | 'silica_wa'
+  | 'silica_removed'
+  | 'silica_cum_load'
+  | 'silica_pct_load'
+  | 'pred_total_wa'
+  | 'pred_warn_90'
+  | 'pred_stop_95';
 
 interface SingleTrainWorkspace {
   editingBatchId: string | null;
@@ -414,6 +442,17 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
   const [isBatchBrowserOpen, setIsBatchBrowserOpen] = useState(false);
   // Default formula display hidden (false) as requested
   const [showFormulaDetails, setShowFormulaDetails] = useState<boolean>(false);
+  const [highlightedFormula, setHighlightedFormula] = useState<{
+    formulaId: FormulaTargetId;
+    rowIndex: number;
+    rowId: string;
+    step: number;
+    columnLabel: string;
+    displayValue: string;
+    fromTab: 'input' | 'silica' | 'cond' | 'weighted' | 'predict';
+    triggerKey: number;
+  } | null>(null);
+  const [returningCellKey, setReturningCellKey] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessMessage, setSaveSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -921,6 +960,142 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
   }, [lastCycle, activeBatchCalc, weightedPrediction]);
 
   const hasCycleData = processedCycles.length > 0;
+
+  const inspectorWeightedRow = useMemo(() => {
+    if (inspectorRow) {
+      return weightedPrediction.rowMap.get(inspectorRow.rowId) || null;
+    }
+    return null;
+  }, [inspectorRow, weightedPrediction]);
+
+  const navigateToFormulaFromTable = (
+    formulaId: FormulaTargetId,
+    rowIndex: number,
+    row: { rowId: string; step: number },
+    columnLabel: string,
+    displayValue: string,
+    e: React.MouseEvent
+  ) => {
+    e.stopPropagation();
+    setInspectedStepIndex(rowIndex);
+    setShowFormulaDetails(true);
+    setHighlightedFormula({
+      formulaId,
+      rowIndex,
+      rowId: row.rowId,
+      step: row.step,
+      columnLabel,
+      displayValue,
+      fromTab: tableTab,
+      triggerKey: Date.now(),
+    });
+    setTimeout(() => {
+      const targetEl =
+        document.getElementById(`formula-card-${formulaId}`) ||
+        document.getElementById('formula-calculation-section');
+      if (targetEl) {
+        targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 140);
+  };
+
+  const handleReturnToTable = () => {
+    if (highlightedFormula) {
+      setTableTab(highlightedFormula.fromTab);
+      setInspectedStepIndex(highlightedFormula.rowIndex);
+      const cellKey = `${highlightedFormula.rowId}_${highlightedFormula.formulaId}`;
+      setReturningCellKey(cellKey);
+      setTimeout(() => {
+        const rowEl =
+          document.getElementById(`calc-table-row-${highlightedFormula.rowId}`) ||
+          document.getElementById('data-entry-calc-table-section');
+        if (rowEl) {
+          rowEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 90);
+      setTimeout(() => {
+        setReturningCellKey((prev) => (prev === cellKey ? null : prev));
+      }, 4000);
+    } else {
+      const tableEl = document.getElementById('data-entry-calc-table-section');
+      if (tableEl) {
+        tableEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  };
+
+  const renderFormulaLinkCell = (
+    formulaId: FormulaTargetId,
+    rowIndex: number,
+    row: { rowId: string; step: number },
+    columnLabel: string,
+    displayValue: string,
+    colorClass: string = ''
+  ) => {
+    const isRowSelected = inspectedStepIndex === rowIndex;
+    const isActiveFormulaCell =
+      (highlightedFormula?.rowId === row.rowId && highlightedFormula?.formulaId === formulaId) ||
+      returningCellKey === `${row.rowId}_${formulaId}`;
+
+    return (
+      <button
+        type="button"
+        onClick={(e) => navigateToFormulaFromTable(formulaId, rowIndex, row, columnLabel, displayValue, e)}
+        title={
+          isTh
+            ? `คลิกเพื่อไปดูสูตรการคำนวณ "${columnLabel}" (รอบที่ #${row.step})`
+            : `Click to view formula for "${columnLabel}" (Step #${row.step})`
+        }
+        className={`table-link-cell ${
+          isActiveFormulaCell || isRowSelected ? 'table-link-cell-pulse' : ''
+        } ${colorClass}`}
+      >
+        <span>{displayValue}</span>
+        <ArrowUpRight className="w-3 h-3 opacity-70 shrink-0" />
+      </button>
+    );
+  };
+
+  const getFormulaCardClass = (formulaId: FormulaTargetId) => {
+    const isHighlighted = highlightedFormula?.formulaId === formulaId;
+    return `p-2.5 rounded-lg border transition-all space-y-1 ${
+      isHighlighted
+        ? 'formula-card-flash border-amber-500 ring-2 ring-amber-400/60'
+        : 'bg-[var(--bg)] border-[var(--line)]'
+    }`;
+  };
+
+  const renderHighlightedFormulaBadge = (formulaId: FormulaTargetId, shortDescTh: string, shortDescEn: string) => {
+    const isHighlighted = highlightedFormula?.formulaId === formulaId;
+    return (
+      <div className="space-y-1 pt-0.5">
+        <div className="font-sans text-[11px] text-[var(--ink-soft)] leading-snug">
+          <strong className="text-[var(--ink)]">{isTh ? 'คำอธิบาย: ' : 'Explanation: '}</strong>
+          {isTh ? shortDescTh : shortDescEn}
+        </div>
+        {isHighlighted && highlightedFormula && (
+          <div className="pt-1 flex flex-wrap items-center justify-between gap-2 border-t border-amber-500/30 font-sans">
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 dark:text-amber-300">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              <span>
+                {isTh
+                  ? `สูตรของค่าที่คลิกจากตาราง: ${highlightedFormula.columnLabel} = ${highlightedFormula.displayValue} (รอบที่ #${highlightedFormula.step})`
+                  : `Selected from table: ${highlightedFormula.columnLabel} = ${highlightedFormula.displayValue} (Step #${highlightedFormula.step})`}
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={handleReturnToTable}
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-[11px] cursor-pointer shadow-xs"
+            >
+              <CornerDownLeft className="w-3 h-3" />
+              <span>{isTh ? `กลับไปยังตารางเดิม (รอบที่ #${highlightedFormula.step})` : `Back to Table (Step #${highlightedFormula.step})`}</span>
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const handleAddRowToBatch = () => {
     setErrorMessage(null);
@@ -2010,10 +2185,11 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
             )}
           </AnimatePresence>
 
-          {/* Collapsible 6-Step Formula & Live Substitution Cards (Hidden by default) */}
+          {/* Collapsible Formula & Live Substitution Cards (Linked directly from calculation table cells) */}
           <AnimatePresence initial={false}>
             {showFormulaDetails && (
               <motion.div
+                id="formula-calculation-section"
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
                 exit={{ opacity: 0, height: 0 }}
@@ -2021,38 +2197,93 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 className="overflow-hidden"
               >
                 <div className="p-3.5 sm:p-4 rounded-xl bg-[var(--bg)] border border-[var(--line)] space-y-4 text-xs font-mono tabular-nums">
+                  {/* Active Formula Navigation Banner with Quick Return Button */}
+                  {highlightedFormula && (
+                    <div className="p-3 rounded-xl bg-amber-500/15 border-2 border-amber-500/60 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 font-sans">
+                      <div className="flex items-start sm:items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-amber-500 shrink-0 mt-0.5 sm:mt-0" />
+                        <div className="text-xs">
+                          <span className="font-bold text-amber-700 dark:text-amber-300">
+                            {isTh
+                              ? `กำลังไฮไลท์สูตรของค่า "${highlightedFormula.columnLabel}" (${highlightedFormula.displayValue}) จากรอบที่ #${highlightedFormula.step}`
+                              : `Highlighting formula for "${highlightedFormula.columnLabel}" (${highlightedFormula.displayValue}) from Step #${highlightedFormula.step}`}
+                          </span>
+                          <span className="block sm:inline sm:ml-2 text-[11px] text-[var(--ink-soft)]">
+                            {isTh
+                              ? 'กรอบสีเหลืองที่กระพริบด้านล่างคือสูตรและวิธีแทนค่าของตัวเลขที่คุณคลิก'
+                              : 'The flashing yellow card below shows the exact formula and substitution.'}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={handleReturnToTable}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold text-xs cursor-pointer whitespace-nowrap shadow-xs"
+                        >
+                          <CornerDownLeft className="w-3.5 h-3.5" />
+                          <span>{isTh ? 'กลับไปยังตารางเดิม' : 'Back to Table'}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setHighlightedFormula(null)}
+                          className="p-1.5 rounded-lg text-[var(--ink-soft)] hover:text-[var(--ink)] hover:bg-[var(--panel)] cursor-pointer"
+                          title={isTh ? 'ล้างไฮไลท์' : 'Clear highlight'}
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Header & Step Selector */}
                   <div className="font-sans flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-[var(--line)] pb-2.5">
                     <div className="space-y-0.5">
                       <div className="text-xs sm:text-sm font-bold text-[var(--ink)]">
-                        เครื่องคำนวณแยกอิสระ 2 ส่วน: Conductivity (Cond.) และ Silica (SiO₂)
+                        {isTh
+                          ? 'ส่วนคำนวณและแสดงสูตร: Conductivity (Cond.), Silica (SiO₂) และการทำนาย Cycle'
+                          : 'Formula Inspector: Conductivity (Cond.), Silica (SiO₂) & Cycle Prediction'}
                       </div>
                       <div className="text-[11px] text-[var(--ink-soft)]">
-                        แยกการคำนวณอิสระตามค่ามวลโมเลกุล ค่าความจุ (Capacity) และค่าอ้างอิง · ทศนิยมอย่างน้อย 3 ตำแหน่ง (mol และ %) · ขั้นตอนที่ 5–8 ทำงานเมื่อกรอกค่า Outlet แล้วเท่านั้น
+                        {isTh
+                          ? 'แสดงสูตรการคำนวณ วิธีแทนค่ารายรอบ และคำอธิบายสั้น ๆ · คลิกที่ตัวเลขในตารางด้านล่างเพื่อกระโดดมายังสูตรที่ต้องการได้ทันที'
+                          : 'Shows calculation formulas, live step substitution, and short explanations · Click any calculated value in the table below to jump here.'}
                       </div>
                     </div>
 
-                    {processedCycles.length > 0 && !liveFormulaCalc.isTypingAny && (
-                      <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 max-w-full">
-                        {processedCycles.map((c, idx) => {
-                          const isSelected = inspectedStepIndex === idx;
-                          return (
-                            <button
-                              key={c.rowId}
-                              type="button"
-                              onClick={() => setInspectedStepIndex(idx)}
-                              className={`px-2 py-0.5 rounded-md text-[11px] font-mono font-semibold cursor-pointer transition-colors shrink-0 whitespace-nowrap ${
-                                isSelected
-                                  ? 'bg-[var(--accent)] text-white'
-                                  : 'bg-[var(--panel)] text-[var(--ink-soft)] hover:text-[var(--ink)] border border-[var(--line)]'
-                              }`}
-                            >
-                              #{c.step}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                    <div className="flex items-center flex-wrap gap-2">
+                      {processedCycles.length > 0 && !liveFormulaCalc.isTypingAny && (
+                        <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 max-w-full">
+                          {processedCycles.map((c, idx) => {
+                            const isSelected = inspectedStepIndex === idx;
+                            return (
+                              <button
+                                key={c.rowId}
+                                type="button"
+                                onClick={() => setInspectedStepIndex(idx)}
+                                className={`px-2 py-0.5 rounded-md text-[11px] font-mono font-semibold cursor-pointer transition-colors shrink-0 whitespace-nowrap ${
+                                  isSelected
+                                    ? 'bg-[var(--accent)] text-white'
+                                    : 'bg-[var(--panel)] text-[var(--ink-soft)] hover:text-[var(--ink)] border border-[var(--line)]'
+                                }`}
+                              >
+                                #{c.step}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                      {hasCycleData && (
+                        <button
+                          type="button"
+                          onClick={handleReturnToTable}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[var(--panel)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-[var(--accent)] cursor-pointer whitespace-nowrap"
+                        >
+                          <CornerDownLeft className="w-3.5 h-3.5" />
+                          <span>{isTh ? 'ไปที่ตารางข้อมูล' : 'Go to Table'}</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {/* Real-time Validation Warning Banner */}
@@ -2080,173 +2311,198 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                             ส่วนที่ 1: Conductivity (Cond.)
                           </h4>
                           <span className="text-xs font-mono font-semibold text-[var(--ink-soft)]">
-                            Estimate maximum conductivity capacity(mol) = {liveFormulaCalc.activeCondCap.toFixed(2)} (Train A = 73.91)
+                            Estimate maximum conductivity capacity(mol) = {liveFormulaCalc.activeCondCap.toFixed(2)}
                           </span>
                         </div>
                         <div className="text-xs text-[var(--ink-soft)]">
-                          Input ที่ผู้ใช้กรอก: 1. Cycle (m³) เช่น 156.81 · 2. Cond. MB Inlet (μS/cm) เช่น 5.270 · 3. Cond. MB Outlet (μS/cm) เช่น 0.076
+                          Input ที่ผู้ใช้กรอก: 1. Cycle (m³) · 2. Cond. MB Inlet (µS/cm) · 3. Cond. MB Outlet (µS/cm)
                         </div>
                       </div>
 
-                      <div className="space-y-1.5 text-xs">
-                        {/* Cond Step 1 */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
+                      <div className="space-y-2 text-xs">
+                        {/* Cond Step 1: ΔV */}
+                        <div id="formula-card-cond_dv" className={getFormulaCardClass('cond_dv')}>
                           <div className="font-sans font-bold text-[var(--ink)]">
-                            1. ระยะห่าง Cycle (m³) = Cycle รวมถัดไป − Cycle ปัจจุบัน
+                            1. ระยะห่าง Cycle (ΔV, m³) = Cycle รวมปัจจุบัน − Cycle รอบก่อนหน้า
                           </div>
                           <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.cycleReady ? (
-                              <>
-                                {liveFormulaCalc.currentCycleVol.toFixed(2)} − {liveFormulaCalc.prevCycleVol.toFixed(2)} ={' '}
-                                <strong className="text-[var(--ink)]">{liveFormulaCalc.distance.toFixed(3)} m³</strong>
-                              </>
-                            ) : (
-                              'รอการกรอกค่า Cycle (m³) (เช่น 378.97 − 156.81 = 222.16)'
-                            )}
+                            {liveFormulaCalc.currentCycleVol.toFixed(2)} − {liveFormulaCalc.prevCycleVol.toFixed(2)} ={' '}
+                            <strong className="text-[var(--ink)]">{liveFormulaCalc.distance.toFixed(2)} m³</strong>
                           </div>
+                          {renderHighlightedFormulaBadge(
+                            'cond_dv',
+                            'คำนวณปริมาตรน้ำที่ผลิตเพิ่มขึ้นในรอบนี้ (ΔV) โดยนำปริมาตรสะสมของรอบปัจจุบันลบด้วยปริมาตรสะสมของรอบก่อนหน้า',
+                            'Incremental water volume produced in this step (ΔV = current cumulative volume minus previous volume).'
+                          )}
                         </div>
 
-                        {/* Cond Step 2 */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
+                        {/* Cond Step 2: Cond Inlet (mol/L) */}
+                        <div id="formula-card-cond_in_mol_l" className={getFormulaCardClass('cond_in_mol_l')}>
                           <div className="font-sans font-bold text-[var(--ink)]">
-                            2. Cond. Concentration MB Inlet (mol/L) = Cond. MB Inlet / (1000 × 126.45)
+                            2. Cond. Inlet (mol/L) = Cond. MB Inlet (µS/cm) ÷ (1000 × 126.45)
                           </div>
                           <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.condInReady ? (
+                            {liveFormulaCalc.condInVal.toFixed(3)} ÷ (1000 × 126.45) ={' '}
+                            <strong className="text-sky-600 dark:text-sky-400">
+                              {liveFormulaCalc.condConcInMolL.toFixed(8)} mol/L
+                            </strong>
+                          </div>
+                          {renderHighlightedFormulaBadge(
+                            'cond_in_mol_l',
+                            'แปลงค่าการนำไฟฟ้าขาเข้า (µS/cm) เป็นความเข้มข้นโมลาร์ต่อลิตร (mol/L) โดยใช้ค่า Limiting Molar Conductivity ของ NaCl = 126.45',
+                            'Converts inlet conductivity (µS/cm) to molar concentration (mol/L) using NaCl limiting molar conductivity 126.45.'
+                          )}
+                        </div>
+
+                        {/* Cond Step 3: Cond Inlet (mol/m³) */}
+                        <div id="formula-card-cond_in_mol_m3" className={getFormulaCardClass('cond_in_mol_m3')}>
+                          <div className="font-sans font-bold text-[var(--ink)]">
+                            3. Cond. Inlet (mol/m³) = [Cond. MB Inlet (µS/cm) ÷ (1000 × 126.45)] × 1000
+                          </div>
+                          <div className="text-[var(--ink-soft)]">
+                            [{liveFormulaCalc.condInVal.toFixed(3)} ÷ (1000 × 126.45)] × 1000 ={' '}
+                            <strong className="text-sky-600 dark:text-sky-400">
+                              {liveFormulaCalc.condConcInMolM3.toFixed(6)} mol/m³
+                            </strong>
+                          </div>
+                          {renderHighlightedFormulaBadge(
+                            'cond_in_mol_m3',
+                            'แปลงความเข้มข้นไอออนขาเข้าจากหน่วย mol/L เป็นต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
+                            'Converts inlet molar concentration from mol/L to mol/m³ by multiplying by 1,000.'
+                          )}
+                        </div>
+
+                        {/* Cond Step 4: Cond Outlet (mol/L) */}
+                        <div id="formula-card-cond_out_mol_l" className={getFormulaCardClass('cond_out_mol_l')}>
+                          <div className="font-sans font-bold text-[var(--ink)]">
+                            4. Cond. Outlet (mol/L) = Cond. MB Outlet (µS/cm) ÷ (1000 × 126.45)
+                          </div>
+                          <div className="text-[var(--ink-soft)]">
+                            {liveFormulaCalc.condOutVal.toFixed(3)} ÷ (1000 × 126.45) ={' '}
+                            <strong className="text-sky-600 dark:text-sky-400">
+                              {liveFormulaCalc.condConcOutMolL.toFixed(9)} mol/L
+                            </strong>
+                          </div>
+                          {renderHighlightedFormulaBadge(
+                            'cond_out_mol_l',
+                            'แปลงค่าการนำไฟฟ้าขาออก (µS/cm) เป็นความเข้มข้นโมลาร์ต่อลิตร (mol/L)',
+                            'Converts outlet conductivity (µS/cm) to molar concentration (mol/L).'
+                          )}
+                        </div>
+
+                        {/* Cond Step 5: Cond Outlet (mol/m³) */}
+                        <div id="formula-card-cond_out_mol_m3" className={getFormulaCardClass('cond_out_mol_m3')}>
+                          <div className="font-sans font-bold text-[var(--ink)]">
+                            5. Cond. Outlet (mol/m³) = [Cond. MB Outlet (µS/cm) ÷ (1000 × 126.45)] × 1000
+                          </div>
+                          <div className="text-[var(--ink-soft)]">
+                            [{liveFormulaCalc.condOutVal.toFixed(3)} ÷ (1000 × 126.45)] × 1000 ={' '}
+                            <strong className="text-sky-600 dark:text-sky-400">
+                              {liveFormulaCalc.condConcOutMolM3.toFixed(6)} mol/m³
+                            </strong>
+                          </div>
+                          {renderHighlightedFormulaBadge(
+                            'cond_out_mol_m3',
+                            'แปลงความเข้มข้นไอออนขาออกจากหน่วย mol/L เป็นต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
+                            'Converts outlet molar concentration from mol/L to mol/m³ by multiplying by 1,000.'
+                          )}
+                        </div>
+
+                        {/* Cond Step 6: ΔCond. (mol/m³) */}
+                        <div id="formula-card-cond_delta" className={getFormulaCardClass('cond_delta')}>
+                          <div className="font-sans font-bold text-[var(--ink)]">
+                            6. ΔCond. (mol/m³) = Cond. Inlet (mol/m³) − Cond. Outlet (mol/m³)
+                          </div>
+                          <div className="text-[var(--ink-soft)]">
+                            {liveFormulaCalc.condConcInMolM3.toFixed(6)} − {liveFormulaCalc.condConcOutMolM3.toFixed(6)} ={' '}
+                            <strong className="text-sky-600 dark:text-sky-400">
+                              {(liveFormulaCalc.condConcInMolM3 - liveFormulaCalc.condConcOutMolM3).toFixed(6)} mol/m³
+                            </strong>
+                          </div>
+                          {renderHighlightedFormulaBadge(
+                            'cond_delta',
+                            'ผลต่างความเข้มข้นไอออนจากค่าการนำไฟฟ้าที่เรซินจับไว้ได้ต่อน้ำ 1 ลูกบาศก์เมตรในรอบนั้น',
+                            'Net conductivity ion concentration removed per m³ of water in this step.'
+                          )}
+                        </div>
+
+                        {/* Cond Step 7: Weighted Average of Cond. */}
+                        <div id="formula-card-cond_wa" className={getFormulaCardClass('cond_wa')}>
+                          <div className="font-sans font-bold text-[var(--ink)]">
+                            7. Weighted Average of Cond. (mol/m³) = Σ(ΔV × ΔCond.) ÷ Σ(ΔV)
+                          </div>
+                          <div className="text-[var(--ink-soft)]">
+                            {inspectorWeightedRow && inspectorWeightedRow.waCond !== null ? (
                               <>
-                                {liveFormulaCalc.condInVal.toFixed(3)} / (1000 × 126.45) ={' '}
+                                ค่าเฉลี่ยถ่วงน้ำหนักสะสมตั้งแต่รอบที่ 1 ถึงรอบที่ #{inspectorWeightedRow.step} ={' '}
                                 <strong className="text-sky-600 dark:text-sky-400">
-                                  {liveFormulaCalc.condConcInMolL.toFixed(8)} mol/L
+                                  {fmtNum(inspectorWeightedRow.waCond, 6)} mol/m³
                                 </strong>
                               </>
                             ) : (
-                              'รอการกรอกค่า Cond. MB Inlet (μS/cm)'
+                              'คำนวณสะสมจากผลรวมของ (ΔV × ΔCond.) หารด้วยผลรวมของ ΔV ตั้งแต่รอบแรกจนถึงรอบปัจจุบัน'
                             )}
                           </div>
+                          {renderHighlightedFormulaBadge(
+                            'cond_wa',
+                            'ค่าเฉลี่ยถ่วงน้ำหนักสะสมของ ΔCond. ตามปริมาตรน้ำ ΔV ตั้งแต่รอบที่ 1 จนถึงรอบปัจจุบัน เพื่อใช้คาดการณ์จุดตัดรอบที่แม่นยำ',
+                            'Cumulative volume-weighted average of ΔCond. from Step 1 up to the current step.'
+                          )}
                         </div>
 
-                        {/* Cond Step 3 */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
+                        {/* Cond Step 8: Cond Ion ที่ใช้ไป (mol) */}
+                        <div id="formula-card-cond_removed" className={getFormulaCardClass('cond_removed')}>
                           <div className="font-sans font-bold text-[var(--ink)]">
-                            3. Cond. Concentration MB Inlet (mol/m³) = [Cond. MB Inlet / (1000 × 126.45)] × 1000
+                            8. Ion ที่ใช้ไป (Cond., mol) = ΔCond. (mol/m³) × ΔV (m³)
                           </div>
                           <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.condInReady ? (
-                              <>
-                                [{liveFormulaCalc.condInVal.toFixed(3)} / (1000 × 126.45)] × 1000 ={' '}
-                                <strong className="text-sky-600 dark:text-sky-400">
-                                  {liveFormulaCalc.condConcInMolM3.toFixed(4)} mol/m³
-                                </strong>
-                              </>
-                            ) : (
-                              'รอการกรอกค่า Cond. MB Inlet (μS/cm)'
-                            )}
+                            ({liveFormulaCalc.condConcInMolM3.toFixed(6)} − {liveFormulaCalc.condConcOutMolM3.toFixed(6)}) ×{' '}
+                            {liveFormulaCalc.distance.toFixed(2)} ={' '}
+                            <strong className="text-sky-600 dark:text-sky-400">
+                              {liveFormulaCalc.condIonsRemoved.toFixed(3)} mol
+                            </strong>
                           </div>
+                          {renderHighlightedFormulaBadge(
+                            'cond_removed',
+                            'ปริมาณโมลของไอออน (Conductivity) ที่เรซินดูดซับไว้ในรอบย่อยนี้ (ความเข้มข้นที่หายไป × ปริมาตรน้ำ ΔV)',
+                            'Moles of conductivity ions captured by the resin during this step (ΔCond. × ΔV).'
+                          )}
                         </div>
 
-                        {/* Cond Step 4 */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
+                        {/* Cond Step 9: Ion load cond. สะสม (mol) */}
+                        <div id="formula-card-cond_cum_load" className={getFormulaCardClass('cond_cum_load')}>
                           <div className="font-sans font-bold text-[var(--ink)]">
-                            4. Cond. Concentration MB Outlet (mol/L) = Cond. MB Outlet / (1000 × 126.45)
+                            9. Ion load cond. (mol) = ผลรวมของค่า Ion ที่ใช้ไป (mol) สะสมตาม Cycle
                           </div>
                           <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.condOutReady ? (
-                              <>
-                                {liveFormulaCalc.condOutVal.toFixed(3)} / (1000 × 126.45) ={' '}
-                                <strong className="text-sky-600 dark:text-sky-400">
-                                  {liveFormulaCalc.condConcOutMolL.toFixed(9)} mol/L
-                                </strong>
-                              </>
-                            ) : (
-                              <span className="text-amber-500 font-sans">
-                                รอการกรอกค่า Cond. MB Outlet (μS/cm)
-                              </span>
-                            )}
+                            {liveFormulaCalc.prevCondLoad.toFixed(3)} + {liveFormulaCalc.condIonsRemoved.toFixed(3)} ={' '}
+                            <strong className="text-sky-600 dark:text-sky-400">
+                              {liveFormulaCalc.cumCondLoad.toFixed(3)} mol
+                            </strong>
                           </div>
+                          {renderHighlightedFormulaBadge(
+                            'cond_cum_load',
+                            'ปริมาณไอออนสะสมในส่วน Conductivity ที่เรซินรับไว้ทั้งหมดตั้งแต่รอบที่ 1 จนถึงรอบปัจจุบัน',
+                            'Cumulative moles of conductivity ions loaded on the resin from Step 1 to the current step.'
+                          )}
                         </div>
 
-                        {/* Cond Step 5 (Requires Outlet) */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
+                        {/* Cond Step 10: % Ion load cond. */}
+                        <div id="formula-card-cond_pct_load" className={getFormulaCardClass('cond_pct_load')}>
                           <div className="font-sans font-bold text-[var(--ink)]">
-                            5. Cond. Concentration MB Outlet (mol/m³) = [Cond. MB Outlet / (1000 × 126.45)] × 1000
+                            10. % Ion load cond. (%) = (Ion load cond. ÷ Estimate maximum conductivity capacity) × 100
                           </div>
                           <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.condOutReady ? (
-                              <>
-                                [{liveFormulaCalc.condOutVal.toFixed(3)} / (1000 × 126.45)] × 1000 ={' '}
-                                <strong className="text-sky-600 dark:text-sky-400">
-                                  {liveFormulaCalc.condConcOutMolM3.toFixed(4)} mol/m³
-                                </strong>
-                              </>
-                            ) : (
-                              <span className="text-amber-500 font-sans">
-                                ขั้นตอนที่ 5–8 ทำงานเมื่อกรอกค่า Cond. MB Outlet แล้วเท่านั้น
-                              </span>
-                            )}
+                            ({liveFormulaCalc.cumCondLoad.toFixed(3)} ÷ {liveFormulaCalc.activeCondCap.toFixed(2)}) × 100 ={' '}
+                            <strong className="text-sky-600 dark:text-sky-400">
+                              {liveFormulaCalc.pctCondLoad.toFixed(3)}%
+                            </strong>
                           </div>
-                        </div>
-
-                        {/* Cond Step 6 (Requires Outlet) */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
-                          <div className="font-sans font-bold text-[var(--ink)]">
-                            6. Cond. Ion Concentration ที่หายไป (mol) = (Cond. Conc. Inlet (mol/m³) − Cond. Conc. Outlet (mol/m³)) × ระยะห่าง Cycle (m³)
-                          </div>
-                          <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.condOutReady && liveFormulaCalc.condInReady && liveFormulaCalc.cycleReady ? (
-                              <>
-                                ({liveFormulaCalc.condConcInMolM3.toFixed(4)} − {liveFormulaCalc.condConcOutMolM3.toFixed(4)}) × {liveFormulaCalc.distance.toFixed(2)} ={' '}
-                                <strong className="text-sky-600 dark:text-sky-400">
-                                  {liveFormulaCalc.condIonsRemoved.toFixed(3)} mol
-                                </strong>
-                              </>
-                            ) : (
-                              <span className="text-amber-500 font-sans">
-                                รอการกรอกค่า Cond. MB Outlet (μS/cm) เพื่อคำนวณค่า mol
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Cond Step 7 (Requires Outlet) */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
-                          <div className="font-sans font-bold text-[var(--ink)]">
-                            7. Ion Load on Cond. = ผลรวมของค่า Cond. Ion ที่หายไป (mol) สะสมตาม Cycle
-                          </div>
-                          <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.condOutReady && liveFormulaCalc.condInReady && liveFormulaCalc.cycleReady ? (
-                              <>
-                                {liveFormulaCalc.prevCondLoad.toFixed(3)} + {liveFormulaCalc.condIonsRemoved.toFixed(3)} ={' '}
-                                <strong className="text-sky-600 dark:text-sky-400">
-                                  {liveFormulaCalc.cumCondLoad.toFixed(3)} mol
-                                </strong>
-                              </>
-                            ) : (
-                              <span className="text-amber-500 font-sans">
-                                รอการกรอกค่า Cond. MB Outlet (μS/cm) เพื่อคำนวณ Ion Load สะสม
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Cond Step 8 (Requires Outlet) */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
-                          <div className="font-sans font-bold text-[var(--ink)]">
-                            8. Percent Cond. Load on Resin (%) = (Ion Load Cond. / Estimate maximum conductivity capacity(mol)) × 100
-                          </div>
-                          <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.condOutReady && liveFormulaCalc.condInReady && liveFormulaCalc.cycleReady ? (
-                              <>
-                                ({liveFormulaCalc.cumCondLoad.toFixed(3)} / {liveFormulaCalc.activeCondCap.toFixed(2)}) × 100 ={' '}
-                                <strong className="text-sky-600 dark:text-sky-400">
-                                  {liveFormulaCalc.pctCondLoad.toFixed(3)}%
-                                </strong>
-                              </>
-                            ) : (
-                              <span className="text-amber-500 font-sans">
-                                รอการกรอกค่า Cond. MB Outlet (μS/cm) เพื่อคำนวณ % Cond. Load
-                              </span>
-                            )}
-                          </div>
+                          {renderHighlightedFormulaBadge(
+                            'cond_pct_load',
+                            'สัดส่วนร้อยละของความจุเรซินในส่วน Conductivity ที่ถูกใช้งานไปแล้วเทียบกับความจุสูงสุด',
+                            'Percentage of maximum conductivity resin capacity consumed up to this step.'
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2259,177 +2515,285 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                             ส่วนที่ 2: Silica (SiO₂)
                           </h4>
                           <span className="text-xs font-mono font-semibold text-[var(--ink-soft)]">
-                            MW SiO₂ = 60.08 g/mol · Estimate maximum silica capacity(mol) = {liveFormulaCalc.activeSilicaCap.toFixed(2)}
+                            MW SiO₂ = 60.08 g/mol · Capacity = {liveFormulaCalc.activeSilicaCap.toFixed(2)} mol
                           </span>
                         </div>
                         <div className="text-xs text-[var(--ink-soft)]">
-                          Input ที่ผู้ใช้กรอก: 1. Cycle (m³) เช่น 156.81 · 2. Silica MB Inlet (ppb) เช่น 185.30 · 3. Silica MB Outlet (ppb) เช่น 1
+                          Input ที่ผู้ใช้กรอก: 1. Cycle (m³) · 2. Silica MB Inlet (ppb) · 3. Silica MB Outlet (ppb)
                         </div>
                       </div>
 
-                      <div className="space-y-1.5 text-xs">
-                        {/* Silica Step 1 */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
+                      <div className="space-y-2 text-xs">
+                        {/* Silica Step 1: ΔV */}
+                        <div id="formula-card-silica_dv" className={getFormulaCardClass('silica_dv')}>
                           <div className="font-sans font-bold text-[var(--ink)]">
-                            1. ระยะห่าง Cycle (m³) = Cycle รวมถัดไป − Cycle ปัจจุบัน (ใช้ค่าเดียวกับส่วน Cond. ได้)
+                            1. ระยะห่าง Cycle (ΔV, m³) = Cycle รวมปัจจุบัน − Cycle รอบก่อนหน้า
                           </div>
                           <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.cycleReady ? (
-                              <>
-                                {liveFormulaCalc.currentCycleVol.toFixed(2)} − {liveFormulaCalc.prevCycleVol.toFixed(2)} ={' '}
-                                <strong className="text-[var(--ink)]">{liveFormulaCalc.distance.toFixed(3)} m³</strong>
-                              </>
-                            ) : (
-                              'รอการกรอกค่า Cycle (m³)'
-                            )}
+                            {liveFormulaCalc.currentCycleVol.toFixed(2)} − {liveFormulaCalc.prevCycleVol.toFixed(2)} ={' '}
+                            <strong className="text-[var(--ink)]">{liveFormulaCalc.distance.toFixed(2)} m³</strong>
                           </div>
+                          {renderHighlightedFormulaBadge(
+                            'silica_dv',
+                            'ปริมาตรน้ำที่ผลิตในรอบย่อยนี้ (ΔV) คำนวณจากผลต่างของ Cycle ปัจจุบันกับ Cycle รอบก่อนหน้า',
+                            'Incremental water volume for this step (ΔV = current Cycle minus previous Cycle).'
+                          )}
                         </div>
 
-                        {/* Silica Step 2 */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
+                        {/* Silica Step 2: Silica Inlet (mol/L) */}
+                        <div id="formula-card-silica_in_mol_l" className={getFormulaCardClass('silica_in_mol_l')}>
                           <div className="font-sans font-bold text-[var(--ink)]">
-                            2. Silica Concentration MB Inlet (mol/L) = (Silica Inlet (ppb) / 1000) / 60.08
+                            2. Silica Inlet (mol/L) = (Silica MB Inlet (ppb) ÷ 1,000,000) ÷ 60.08
                           </div>
                           <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.silicaInReady ? (
+                            ({liveFormulaCalc.silicaInVal.toFixed(2)} ÷ 1,000,000) ÷ 60.08 ={' '}
+                            <strong className="text-indigo-600 dark:text-indigo-400">
+                              {liveFormulaCalc.silicaConcInMolL.toFixed(7)} mol/L
+                            </strong>
+                          </div>
+                          {renderHighlightedFormulaBadge(
+                            'silica_in_mol_l',
+                            'แปลงค่าซิลิกาขาเข้าจากหน่วย ppb (µg/L) เป็นกรัมต่อลิตร แล้วหารด้วยมวลโมเลกุลของ SiO₂ (60.08 g/mol)',
+                            'Converts inlet silica from ppb (µg/L) to mol/L using SiO₂ molar mass 60.08 g/mol.'
+                          )}
+                        </div>
+
+                        {/* Silica Step 3: Silica Inlet (mol/m³) */}
+                        <div id="formula-card-silica_in_mol_m3" className={getFormulaCardClass('silica_in_mol_m3')}>
+                          <div className="font-sans font-bold text-[var(--ink)]">
+                            3. Silica Inlet (mol/m³) = Silica Inlet (mol/L) × 1000
+                          </div>
+                          <div className="text-[var(--ink-soft)]">
+                            {liveFormulaCalc.silicaConcInMolL.toFixed(7)} × 1000 ={' '}
+                            <strong className="text-indigo-600 dark:text-indigo-400">
+                              {liveFormulaCalc.silicaConcInMolM3.toFixed(6)} mol/m³
+                            </strong>
+                          </div>
+                          {renderHighlightedFormulaBadge(
+                            'silica_in_mol_m3',
+                            'แปลงความเข้มข้นซิลิกาขาเข้าจากหน่วย mol/L เป็นโมลต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
+                            'Converts inlet silica molar concentration from mol/L to mol/m³ (× 1,000).'
+                          )}
+                        </div>
+
+                        {/* Silica Step 4: Silica Outlet (mol/L) */}
+                        <div id="formula-card-silica_out_mol_l" className={getFormulaCardClass('silica_out_mol_l')}>
+                          <div className="font-sans font-bold text-[var(--ink)]">
+                            4. Silica Outlet (mol/L) = (Silica MB Outlet (ppb) ÷ 1,000,000) ÷ 60.08
+                          </div>
+                          <div className="text-[var(--ink-soft)]">
+                            ({liveFormulaCalc.silicaOutVal.toFixed(2)} ÷ 1,000,000) ÷ 60.08 ={' '}
+                            <strong className="text-indigo-600 dark:text-indigo-400">
+                              {liveFormulaCalc.silicaConcOutMolL.toFixed(8)} mol/L
+                            </strong>
+                          </div>
+                          {renderHighlightedFormulaBadge(
+                            'silica_out_mol_l',
+                            'แปลงค่าซิลิกาขาออกจากหน่วย ppb เป็นโมลต่อลิตร (mol/L) ด้วยมวลโมเลกุล 60.08 g/mol',
+                            'Converts outlet silica from ppb to mol/L using SiO₂ molar mass 60.08 g/mol.'
+                          )}
+                        </div>
+
+                        {/* Silica Step 5: Silica Outlet (mol/m³) */}
+                        <div id="formula-card-silica_out_mol_m3" className={getFormulaCardClass('silica_out_mol_m3')}>
+                          <div className="font-sans font-bold text-[var(--ink)]">
+                            5. Silica Outlet (mol/m³) = Silica Outlet (mol/L) × 1000
+                          </div>
+                          <div className="text-[var(--ink-soft)]">
+                            {liveFormulaCalc.silicaConcOutMolL.toFixed(8)} × 1000 ={' '}
+                            <strong className="text-indigo-600 dark:text-indigo-400">
+                              {liveFormulaCalc.silicaConcOutMolM3.toFixed(6)} mol/m³
+                            </strong>
+                          </div>
+                          {renderHighlightedFormulaBadge(
+                            'silica_out_mol_m3',
+                            'แปลงความเข้มข้นซิลิกาขาออกจากหน่วย mol/L เป็นโมลต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
+                            'Converts outlet silica molar concentration from mol/L to mol/m³ (× 1,000).'
+                          )}
+                        </div>
+
+                        {/* Silica Step 6: ΔSilica (mol/m³) */}
+                        <div id="formula-card-silica_delta" className={getFormulaCardClass('silica_delta')}>
+                          <div className="font-sans font-bold text-[var(--ink)]">
+                            6. ΔSilica (mol/m³) = Silica Inlet (mol/m³) − Silica Outlet (mol/m³)
+                          </div>
+                          <div className="text-[var(--ink-soft)]">
+                            {liveFormulaCalc.silicaConcInMolM3.toFixed(6)} − {liveFormulaCalc.silicaConcOutMolM3.toFixed(6)} ={' '}
+                            <strong className="text-indigo-600 dark:text-indigo-400">
+                              {(liveFormulaCalc.silicaConcInMolM3 - liveFormulaCalc.silicaConcOutMolM3).toFixed(6)} mol/m³
+                            </strong>
+                          </div>
+                          {renderHighlightedFormulaBadge(
+                            'silica_delta',
+                            'ปริมาณซิลิกาที่ถูกเรซินกำจัดออกไปต่อน้ำ 1 ลูกบาศก์เมตรในรอบนั้น (Inlet ลบด้วย Outlet)',
+                            'Net silica concentration removed by the resin per m³ of water in this step.'
+                          )}
+                        </div>
+
+                        {/* Silica Step 7: Weighted Average of Silica */}
+                        <div id="formula-card-silica_wa" className={getFormulaCardClass('silica_wa')}>
+                          <div className="font-sans font-bold text-[var(--ink)]">
+                            7. Weighted Average of Silica (mol/m³) = Σ(ΔV × ΔSilica) ÷ Σ(ΔV)
+                          </div>
+                          <div className="text-[var(--ink-soft)]">
+                            {inspectorWeightedRow && inspectorWeightedRow.waSilica !== null ? (
                               <>
-                                ({liveFormulaCalc.silicaInVal.toFixed(2)} / 1000) / 60.08 ={' '}
+                                ค่าเฉลี่ยถ่วงน้ำหนักสะสมตั้งแต่รอบที่ 1 ถึงรอบที่ #{inspectorWeightedRow.step} ={' '}
                                 <strong className="text-indigo-600 dark:text-indigo-400">
-                                  {liveFormulaCalc.silicaConcInMolL.toFixed(7)} mol/L
+                                  {fmtNum(inspectorWeightedRow.waSilica, 6)} mol/m³
                                 </strong>
                               </>
                             ) : (
-                              'รอการกรอกค่า Silica MB Inlet (ppb)'
+                              'คำนวณสะสมจากผลรวมของ (ΔV × ΔSilica) หารด้วยผลรวมของ ΔV ตั้งแต่รอบแรกจนถึงรอบปัจจุบัน'
                             )}
                           </div>
+                          {renderHighlightedFormulaBadge(
+                            'silica_wa',
+                            'ค่าเฉลี่ยถ่วงน้ำหนักสะสมของ ΔSilica ตามปริมาตรน้ำ ΔV ตั้งแต่รอบที่ 1 จนถึงรอบปัจจุบัน',
+                            'Cumulative volume-weighted average of ΔSilica from Step 1 up to the current step.'
+                          )}
                         </div>
 
-                        {/* Silica Step 3 */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
+                        {/* Silica Step 8: Ion ที่ใช้ไป (mol) */}
+                        <div id="formula-card-silica_removed" className={getFormulaCardClass('silica_removed')}>
                           <div className="font-sans font-bold text-[var(--ink)]">
-                            3. Silica Concentration MB Inlet (mol/m³) = [(Silica Inlet (ppb) / 1000) / 60.08] × 1000
+                            8. Ion ที่ใช้ไป (Silica, mol) = ΔSilica (mol/m³) × ΔV (m³)
                           </div>
                           <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.silicaInReady ? (
-                              <>
-                                [({liveFormulaCalc.silicaInVal.toFixed(2)} / 1000) / 60.08] × 1000 ={' '}
-                                <strong className="text-indigo-600 dark:text-indigo-400">
-                                  {liveFormulaCalc.silicaConcInMolM3.toFixed(4)} mol/m³
-                                </strong>
-                              </>
-                            ) : (
-                              'รอการกรอกค่า Silica MB Inlet (ppb)'
-                            )}
+                            ({liveFormulaCalc.silicaConcInMolM3.toFixed(6)} − {liveFormulaCalc.silicaConcOutMolM3.toFixed(6)}) ×{' '}
+                            {liveFormulaCalc.distance.toFixed(2)} ={' '}
+                            <strong className="text-indigo-600 dark:text-indigo-400">
+                              {liveFormulaCalc.silicaIonsRemoved.toFixed(3)} mol
+                            </strong>
                           </div>
+                          {renderHighlightedFormulaBadge(
+                            'silica_removed',
+                            'ปริมาณโมลของซิลิกาที่เรซินจับไว้ในรอบย่อยนี้ (ความเข้มข้นซิลิกาที่หายไป × ปริมาตรน้ำ ΔV)',
+                            'Moles of silica captured by the resin during this step (ΔSilica × ΔV).'
+                          )}
                         </div>
 
-                        {/* Silica Step 4 */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
+                        {/* Silica Step 9: Ion load silica (mol) */}
+                        <div id="formula-card-silica_cum_load" className={getFormulaCardClass('silica_cum_load')}>
                           <div className="font-sans font-bold text-[var(--ink)]">
-                            4. Silica Concentration MB Outlet (mol/L) = (Silica Outlet (ppb) / 1000) / 60.08
+                            9. Ion load silica (mol) = ผลรวมของค่า Silica Ion ที่ใช้ไป (mol) สะสมตาม Cycle
                           </div>
                           <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.silicaOutReady ? (
-                              <>
-                                ({liveFormulaCalc.silicaOutVal.toFixed(2)} / 1000) / 60.08 ={' '}
-                                <strong className="text-indigo-600 dark:text-indigo-400">
-                                  {liveFormulaCalc.silicaConcOutMolL.toFixed(8)} mol/L
-                                </strong>
-                              </>
-                            ) : (
-                              <span className="text-amber-500 font-sans">
-                                รอการกรอกค่า Silica MB Outlet (ppb)
-                              </span>
-                            )}
+                            {liveFormulaCalc.prevSilicaLoad.toFixed(3)} + {liveFormulaCalc.silicaIonsRemoved.toFixed(3)} ={' '}
+                            <strong className="text-indigo-600 dark:text-indigo-400">
+                              {liveFormulaCalc.cumSilicaLoad.toFixed(3)} mol
+                            </strong>
                           </div>
+                          {renderHighlightedFormulaBadge(
+                            'silica_cum_load',
+                            'ปริมาณโมลซิลิกาสะสมทั้งหมดที่เรซินดูดซับไว้ตั้งแต่รอบที่ 1 จนถึงรอบปัจจุบัน',
+                            'Cumulative moles of silica loaded on the resin from Step 1 to the current step.'
+                          )}
                         </div>
 
-                        {/* Silica Step 5 (Requires Outlet) */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
+                        {/* Silica Step 10: %Ion load silica */}
+                        <div id="formula-card-silica_pct_load" className={getFormulaCardClass('silica_pct_load')}>
                           <div className="font-sans font-bold text-[var(--ink)]">
-                            5. Silica Concentration MB Outlet (mol/m³) = [(Silica Outlet (ppb) / 1000) / 60.08] × 1000
+                            10. %Ion load silica (%) = (Ion load silica ÷ Estimate maximum silica capacity) × 100
                           </div>
                           <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.silicaOutReady ? (
-                              <>
-                                [({liveFormulaCalc.silicaOutVal.toFixed(2)} / 1000) / 60.08] × 1000 ={' '}
-                                <strong className="text-indigo-600 dark:text-indigo-400">
-                                  {liveFormulaCalc.silicaConcOutMolM3.toFixed(4)} mol/m³
-                                </strong>
-                              </>
-                            ) : (
-                              <span className="text-amber-500 font-sans">
-                                ขั้นตอนที่ 5–8 ทำงานเมื่อกรอกค่า Silica MB Outlet แล้วเท่านั้น
-                              </span>
-                            )}
+                            ({liveFormulaCalc.cumSilicaLoad.toFixed(3)} ÷ {liveFormulaCalc.activeSilicaCap.toFixed(2)}) × 100 ={' '}
+                            <strong className="text-indigo-600 dark:text-indigo-400">
+                              {liveFormulaCalc.pctSilicaLoad.toFixed(3)}%
+                            </strong>
                           </div>
+                          {renderHighlightedFormulaBadge(
+                            'silica_pct_load',
+                            'สัดส่วนร้อยละของความจุเรซินในส่วน Silica ที่ถูกใช้งานไปแล้วเทียบกับความจุซิลิกาสูงสุด',
+                            'Percentage of maximum silica resin capacity consumed up to this step.'
+                          )}
                         </div>
+                      </div>
+                    </div>
+                  </div>
 
-                        {/* Silica Step 6 (Requires Outlet) */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
-                          <div className="font-sans font-bold text-[var(--ink)]">
-                            6. Silica Ion Concentration ที่หายไป (mol) = (Silica Conc. Inlet (mol/m³) − Silica Conc. Outlet (mol/m³)) × ระยะห่าง Cycle (m³)
-                          </div>
-                          <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.silicaOutReady && liveFormulaCalc.silicaInReady && liveFormulaCalc.cycleReady ? (
-                              <>
-                                ({liveFormulaCalc.silicaConcInMolM3.toFixed(4)} − {liveFormulaCalc.silicaConcOutMolM3.toFixed(4)}) × {liveFormulaCalc.distance.toFixed(2)} ={' '}
-                                <strong className="text-indigo-600 dark:text-indigo-400">
-                                  {liveFormulaCalc.silicaIonsRemoved.toFixed(3)} mol
-                                </strong>
-                              </>
-                            ) : (
-                              <span className="text-amber-500 font-sans">
-                                รอการกรอกค่า Silica MB Outlet (ppb) เพื่อคำนวณค่า mol
-                              </span>
-                            )}
-                          </div>
-                        </div>
+                  {/* ส่วนที่ 3: สูตรทำนาย Cycle, Total Weighted Average, จุดแจ้งเตือน (90%) และจุดหยุดระบบ (95%) */}
+                  <div className="p-3.5 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-2.5">
+                    <div className="text-xs sm:text-sm font-bold text-[var(--accent)] font-sans">
+                      {isTh
+                        ? 'ส่วนที่ 3: การทำนาย Cycle (Total Weighted Average, จุดแจ้งเตือนระบบ 90% และจุดหยุดระบบ 95%)'
+                        : 'Section 3: Cycle Prediction (Total Weighted Average, 90% System Warning & 95% System Stop)'}
+                    </div>
 
-                        {/* Silica Step 7 (Requires Outlet) */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
-                          <div className="font-sans font-bold text-[var(--ink)]">
-                            7. Ion Load on Silica = ผลรวมของค่า Silica Ion ที่หายไป (mol) สะสมตาม Cycle
-                          </div>
-                          <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.silicaOutReady && liveFormulaCalc.silicaInReady && liveFormulaCalc.cycleReady ? (
-                              <>
-                                {liveFormulaCalc.prevSilicaLoad.toFixed(3)} + {liveFormulaCalc.silicaIonsRemoved.toFixed(3)} ={' '}
-                                <strong className="text-indigo-600 dark:text-indigo-400">
-                                  {liveFormulaCalc.cumSilicaLoad.toFixed(3)} mol
-                                </strong>
-                              </>
-                            ) : (
-                              <span className="text-amber-500 font-sans">
-                                รอการกรอกค่า Silica MB Outlet (ppb) เพื่อคำนวณ Ion Load สะสม
-                              </span>
-                            )}
-                          </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs">
+                      {/* Total Weighted Average */}
+                      <div id="formula-card-pred_total_wa" className={getFormulaCardClass('pred_total_wa')}>
+                        <div className="font-sans font-bold text-[var(--ink)]">
+                          1. Total Weighted Average (mol/m³) = Weighted Average of Silica + Weighted Average of Cond.
                         </div>
+                        <div className="text-[var(--ink-soft)]">
+                          {inspectorWeightedRow && inspectorWeightedRow.totalWa !== null ? (
+                            <>
+                              {fmtNum(inspectorWeightedRow.waSilica, 6)} + {fmtNum(inspectorWeightedRow.waCond, 6)} ={' '}
+                              <strong className="text-[var(--ink)]">{fmtNum(inspectorWeightedRow.totalWa, 6)} mol/m³</strong>
+                            </>
+                          ) : (
+                            `${fmtNum(weightedPrediction.waSilica, 6)} + ${fmtNum(weightedPrediction.waCond, 6)} = ${fmtNum(
+                              weightedPrediction.denominator,
+                              6
+                            )} mol/m³`
+                          )}
+                        </div>
+                        {renderHighlightedFormulaBadge(
+                          'pred_total_wa',
+                          'ผลรวมของอัตราการใช้ความจุเรซินเฉลี่ยถ่วงน้ำหนัก (Silica + Conductivity) ต่อน้ำ 1 ลูกบาศก์เมตร ใช้เป็นตัวหารในการทำนายปริมาตรน้ำ',
+                          'Combined volume-weighted average ion load rate (Silica + Conductivity) per m³, used as the divisor for volume prediction.'
+                        )}
+                      </div>
 
-                        {/* Silica Step 8 (Requires Outlet) */}
-                        <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-0.5">
-                          <div className="font-sans font-bold text-[var(--ink)]">
-                            8. Percent Silica Load on Resin (%) = (Silica Ion Load / 5.7) × 100
-                          </div>
-                          <div className="text-[var(--ink-soft)]">
-                            {liveFormulaCalc.silicaOutReady && liveFormulaCalc.silicaInReady && liveFormulaCalc.cycleReady ? (
-                              <>
-                                ({liveFormulaCalc.cumSilicaLoad.toFixed(3)} / {liveFormulaCalc.activeSilicaCap.toFixed(2)}) × 100 ={' '}
-                                <strong className="text-indigo-600 dark:text-indigo-400">
-                                  {liveFormulaCalc.pctSilicaLoad.toFixed(3)}%
-                                </strong>{' '}
-                                <span className="opacity-80">
-                                  (เทียบ 5.7 = {liveFormulaCalc.pctSilicaLoadRef57.toFixed(3)}%)
-                                </span>
-                              </>
-                            ) : (
-                              <span className="text-amber-500 font-sans">
-                                รอการกรอกค่า Silica MB Outlet (ppb) เพื่อคำนวณ % Silica Load
-                              </span>
-                            )}
-                          </div>
+                      {/* จุดแจ้งเตือนระบบ (90%) */}
+                      <div id="formula-card-pred_warn_90" className={getFormulaCardClass('pred_warn_90')}>
+                        <div className="font-sans font-bold text-amber-600 dark:text-amber-400">
+                          2. {isTh ? 'จุดแจ้งเตือนระบบ (90%)' : 'System Warning (90%)'} = {fmtNum(weightedPrediction.warnMol, 2)} mol ÷ (Weighted Average Silica + Weighted Average Cond.)
                         </div>
+                        <div className="text-[var(--ink-soft)]">
+                          {inspectorWeightedRow && inspectorWeightedRow.warnVolume !== null ? (
+                            <>
+                              {fmtNum(weightedPrediction.warnMol, 2)} ÷ {fmtNum(inspectorWeightedRow.totalWa, 6)} ={' '}
+                              <strong className="text-amber-500">{fmtNum(inspectorWeightedRow.warnVolume, 2)} m³</strong>
+                            </>
+                          ) : (
+                            `${fmtNum(weightedPrediction.warnMol, 2)} ÷ ${fmtNum(weightedPrediction.denominator, 6)} = ${fmtNum(
+                              weightedPrediction.warnVolume,
+                              2
+                            )} m³`
+                          )}
+                        </div>
+                        {renderHighlightedFormulaBadge(
+                          'pred_warn_90',
+                          `คาดการณ์ปริมาตรน้ำสะสมเมื่อเรซินถูกใช้งานถึง 90% ของความจุรวม (${fmtNum(weightedPrediction.warnMol, 2)} mol) เพื่อแจ้งเตือนเตรียมสลับ Train`,
+                          `Predicted cumulative water volume when resin reaches 90% capacity (${fmtNum(weightedPrediction.warnMol, 2)} mol).`
+                        )}
+                      </div>
+
+                      {/* จุดหยุดระบบ (95%) */}
+                      <div id="formula-card-pred_stop_95" className={getFormulaCardClass('pred_stop_95')}>
+                        <div className="font-sans font-bold text-rose-600 dark:text-rose-400">
+                          3. {isTh ? 'จุดหยุดระบบ (95%)' : 'System Stop (95%)'} = {fmtNum(weightedPrediction.stopMol, 2)} mol ÷ (Weighted Average Silica + Weighted Average Cond.)
+                        </div>
+                        <div className="text-[var(--ink-soft)]">
+                          {inspectorWeightedRow && inspectorWeightedRow.stopVolume !== null ? (
+                            <>
+                              {fmtNum(weightedPrediction.stopMol, 2)} ÷ {fmtNum(inspectorWeightedRow.totalWa, 6)} ={' '}
+                              <strong className="text-rose-500">{fmtNum(inspectorWeightedRow.stopVolume, 2)} m³</strong>
+                            </>
+                          ) : (
+                            `${fmtNum(weightedPrediction.stopMol, 2)} ÷ ${fmtNum(weightedPrediction.denominator, 6)} = ${fmtNum(
+                              weightedPrediction.stopVolume,
+                              2
+                            )} m³`
+                          )}
+                        </div>
+                        {renderHighlightedFormulaBadge(
+                          'pred_stop_95',
+                          `คาดการณ์ปริมาตรน้ำสะสมเมื่อเรซินถูกใช้งานถึง 95% ของความจุรวม (${fmtNum(weightedPrediction.stopMol, 2)} mol) ซึ่งเป็นจุดตัดรอบหยุดเดินระบบเพื่อ Regeneration`,
+                          `Predicted cumulative water volume when resin reaches 95% capacity (${fmtNum(weightedPrediction.stopMol, 2)} mol) for regeneration.`
+                        )}
                       </div>
                     </div>
                   </div>
@@ -2471,7 +2835,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                           <li>• Estimate maximum conductivity capacity(mol) = <strong className="text-[var(--ink)]">73.91</strong></li>
                           <li>• Estimate maximum silica capacity(mol) = <strong className="text-[var(--ink)]">5.68</strong></li>
                           <li>• Total Capacity (100%) = 73.91 + 5.68 = <strong className="text-emerald-600 dark:text-emerald-400">79.59</strong></li>
-                          <li className="font-sans">• Estimate maximum silica capacity(mol) แก้ไข = ไม่มี (ใช้ค่า 5.68 ตามที่กำหนด)</li>
+                          <li className="font-sans">• จุดแจ้งเตือนระบบ (90%) = <strong className="text-amber-500">71.63 mol</strong> · จุดหยุดระบบ (95%) = <strong className="text-rose-500">75.61 mol</strong></li>
                         </ul>
                       </div>
 
@@ -2483,31 +2847,11 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                         <ul className="space-y-0.5 text-[var(--ink-soft)] font-mono">
                           <li>• Estimate maximum conductivity capacity(mol) = <strong className="text-[var(--ink)]">106.47</strong></li>
                           <li className="font-sans">
-                            • <span className="font-mono">Estimate maximum silica capacity(mol) = <strong className="text-[var(--ink)]">5.93</strong></span> (แก้ไขจาก 5.91 เป็น 5.93)
+                            • <span className="font-mono">Estimate maximum silica capacity(mol) = <strong className="text-[var(--ink)]">5.93</strong></span>
                           </li>
                           <li>• Total Capacity (100%) = 106.47 + 5.93 = <strong className="text-sky-600 dark:text-sky-400">112.40</strong></li>
+                          <li className="font-sans">• จุดแจ้งเตือนระบบ (90%) = <strong className="text-amber-500">101.16 mol</strong> · จุดหยุดระบบ (95%) = <strong className="text-rose-500">106.78 mol</strong></li>
                         </ul>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* การคำนวณจุดแจ้งเตือนและจุดหยุดระบบ (Weighted Average) */}
-                  <div className="p-3.5 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-2">
-                    <div className="text-xs sm:text-sm font-bold text-[var(--accent)] font-sans">
-                      {isTh
-                        ? 'สูตรการคำนวณจุดแจ้งเตือนระบบ (90%) และจุดหยุดระบบ (95%)'
-                        : 'System Warning (90%) & System Stop (95%) Formulas'}
-                    </div>
-                    <div className="space-y-1 text-xs font-mono text-[var(--ink-soft)] leading-relaxed">
-                      <div>• ΔSilica (mol/m³) = Silica Inlet (mol/m³) − Silica Outlet (mol/m³)</div>
-                      <div>• Weighted Average of Silica = Σ(ΔV × ΔSilica) ÷ Σ(ΔV)</div>
-                      <div>• ΔCond. (mol/m³) = Cond. Inlet (mol/m³) − Cond. Outlet (mol/m³)</div>
-                      <div>• Weighted Average of Cond. = Σ(ΔV × ΔCond.) ÷ Σ(ΔV)</div>
-                      <div className="text-amber-600 dark:text-amber-400 font-semibold">
-                        • {isTh ? 'จุดแจ้งเตือนระบบ (90%)' : 'System Warning (90%)'} = {fmtNum(weightedPrediction.warnMol, 2)} mol ÷ (Weighted Average Silica + Weighted Average Cond.)
-                      </div>
-                      <div className="text-rose-600 dark:text-rose-400 font-semibold">
-                        • {isTh ? 'จุดหยุดระบบ (95%)' : 'System Stop (95%)'} = {fmtNum(weightedPrediction.stopMol, 2)} mol ÷ (Weighted Average Silica + Weighted Average Cond.)
                       </div>
                     </div>
                   </div>
@@ -2520,7 +2864,10 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
 
       {/* 3. Data Entry & Calculation Table Section (Shown only after rows are added) */}
       {hasCycleData && (
-        <div className="p-4 sm:p-5 rounded-2xl bg-[var(--panel)] border border-[var(--line)] space-y-3.5">
+        <div
+          id="data-entry-calc-table-section"
+          className="p-4 sm:p-5 rounded-2xl bg-[var(--panel)] border border-[var(--line)] space-y-3.5"
+        >
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 border-b border-[var(--line)] pb-3">
             <div className="flex items-center gap-2 min-w-0">
               <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />
@@ -2653,6 +3000,38 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
               </button>
             </div>
           </div>
+
+          {/* Interactive Formula Link Hint Bar */}
+          {tableTab !== 'input' && displayMode === 'table' && (
+            <div className="px-3 py-2 rounded-xl bg-sky-500/10 border border-sky-500/30 text-xs flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-sky-700 dark:text-sky-300 font-medium">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                <span>
+                  {isTh
+                    ? 'คลิกที่ค่าตัวเลขที่มีกรอบเส้นประในตาราง เพื่อเปิดดูสูตรการคำนวณและไฮไลท์วิธีแทนค่าของรอบนั้นทันที'
+                    : 'Click any dashed-link value in the table to jump to its formula and highlight the calculation.'}
+                </span>
+              </div>
+              {highlightedFormula && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowFormulaDetails(true);
+                    const el = document.getElementById(`formula-card-${highlightedFormula.formulaId}`);
+                    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  }}
+                  className="text-xs font-bold text-amber-600 dark:text-amber-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <span>
+                    {isTh
+                      ? `ดูสูตรล่าสุดที่เลือก: ${highlightedFormula.columnLabel} (รอบที่ #${highlightedFormula.step})`
+                      : `View last formula: ${highlightedFormula.columnLabel} (Step #${highlightedFormula.step})`}
+                  </span>
+                  <ArrowUpRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Flagged Rows Alert */}
           {flaggedRows.length > 0 && (
@@ -3074,6 +3453,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
 
                     return (
                       <tr
+                        id={`calc-table-row-${c.rowId}`}
                         key={c.rowId}
                         onClick={() => setInspectedStepIndex(idx)}
                         className={`transition-colors cursor-pointer ${
@@ -3116,22 +3496,52 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                               {c.step}
                             </td>
                             <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">{c.cycleEnd.toFixed(2)}</td>
-                            <td className="py-2 px-2.5 text-right text-[var(--ink-soft)]">{c.distance.toFixed(2)}</td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('silica_dv', idx, c, 'ΔV (m³)', c.distance.toFixed(2), 'text-[var(--ink-soft)]')}
+                            </td>
                             <td className="py-2 px-2.5 text-right">{c.silicaIn.toFixed(2)}</td>
-                            <td className="py-2 px-2.5 text-right">{c.silicaConcInMolL.toFixed(7)}</td>
-                            <td className="py-2 px-2.5 text-right font-semibold">{c.silicaConcInMolM3.toFixed(3)}</td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('silica_in_mol_l', idx, c, 'Silica Inlet (mol/L)', c.silicaConcInMolL.toFixed(7))}
+                            </td>
+                            <td className="py-2 px-2.5 text-right font-semibold">
+                              {renderFormulaLinkCell('silica_in_mol_m3', idx, c, 'Silica Inlet (mol/m³)', c.silicaConcInMolM3.toFixed(3))}
+                            </td>
                             <td className="py-2 px-2.5 text-right">{c.silicaOut.toFixed(2)}</td>
-                            <td className="py-2 px-2.5 text-right">{c.silicaConcOutMolL.toFixed(8)}</td>
-                            <td className="py-2 px-2.5 text-right font-semibold">{c.silicaConcOutMolM3.toFixed(3)}</td>
-                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.dSilica, 6)}</td>
-                            <td className="py-2 px-2.5 text-right font-bold text-indigo-600 dark:text-indigo-400">
-                              {fmtNum(wp?.waSilica, 6)}
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('silica_out_mol_l', idx, c, 'Silica Outlet (mol/L)', c.silicaConcOutMolL.toFixed(8))}
                             </td>
-                            <td className="py-2 px-2.5 text-right font-bold">{c.silicaIonsRemoved.toFixed(3)}</td>
-                            <td className="py-2 px-2.5 text-right font-bold text-indigo-600 dark:text-indigo-400">
-                              {c.cumulativeSilicaLoad.toFixed(3)}
+                            <td className="py-2 px-2.5 text-right font-semibold">
+                              {renderFormulaLinkCell('silica_out_mol_m3', idx, c, 'Silica Outlet (mol/m³)', c.silicaConcOutMolM3.toFixed(3))}
                             </td>
-                            <td className="py-2 px-2.5 text-right font-bold">{c.silicaPercentLoad.toFixed(3)}%</td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('silica_delta', idx, c, 'ΔSilica (mol/m³)', fmtNum(wp?.dSilica, 6))}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell(
+                                'silica_wa',
+                                idx,
+                                c,
+                                'Weighted Avg of Silica (mol/m³)',
+                                fmtNum(wp?.waSilica, 6),
+                                'font-bold text-indigo-600 dark:text-indigo-400'
+                              )}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('silica_removed', idx, c, 'Ion ที่ใช้ไป (Silica, mol)', c.silicaIonsRemoved.toFixed(3), 'font-bold')}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell(
+                                'silica_cum_load',
+                                idx,
+                                c,
+                                'Ion load silica (mol)',
+                                c.cumulativeSilicaLoad.toFixed(3),
+                                'font-bold text-indigo-600 dark:text-indigo-400'
+                              )}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('silica_pct_load', idx, c, '%Ion load silica (%)', `${c.silicaPercentLoad.toFixed(3)}%`, 'font-bold')}
+                            </td>
                           </>
                         )}
 
@@ -3141,20 +3551,46 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                               {c.step}
                             </td>
                             <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">{c.cycleEnd.toFixed(2)}</td>
-                            <td className="py-2 px-2.5 text-right text-[var(--ink-soft)]">{c.distance.toFixed(2)}</td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('cond_dv', idx, c, 'ΔV (m³)', c.distance.toFixed(2), 'text-[var(--ink-soft)]')}
+                            </td>
                             <td className="py-2 px-2.5 text-right">{c.condIn.toFixed(3)}</td>
-                            <td className="py-2 px-2.5 text-right">{c.concInMolM3.toFixed(3)}</td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('cond_in_mol_m3', idx, c, 'Cond. Inlet (mol/m³)', c.concInMolM3.toFixed(3))}
+                            </td>
                             <td className="py-2 px-2.5 text-right">{c.condOut.toFixed(3)}</td>
-                            <td className="py-2 px-2.5 text-right">{c.concOutMolM3.toFixed(3)}</td>
-                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.dCond, 6)}</td>
-                            <td className="py-2 px-2.5 text-right font-bold text-sky-600 dark:text-sky-400">
-                              {fmtNum(wp?.waCond, 6)}
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('cond_out_mol_m3', idx, c, 'Cond. Outlet (mol/m³)', c.concOutMolM3.toFixed(3))}
                             </td>
-                            <td className="py-2 px-2.5 text-right font-bold">{c.ionsRemoved.toFixed(3)}</td>
-                            <td className="py-2 px-2.5 text-right font-bold text-[var(--accent)]">
-                              {c.cumulativeIonLoad.toFixed(3)}
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('cond_delta', idx, c, 'ΔCond. (mol/m³)', fmtNum(wp?.dCond, 6))}
                             </td>
-                            <td className="py-2 px-2.5 text-right font-bold">{c.condPercentLoad.toFixed(3)}%</td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell(
+                                'cond_wa',
+                                idx,
+                                c,
+                                'Weighted Avg of Cond. (mol/m³)',
+                                fmtNum(wp?.waCond, 6),
+                                'font-bold text-sky-600 dark:text-sky-400'
+                              )}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('cond_removed', idx, c, 'Ion ที่ใช้ไป (Cond., mol)', c.ionsRemoved.toFixed(3), 'font-bold')}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell(
+                                'cond_cum_load',
+                                idx,
+                                c,
+                                'Ion load cond. (mol)',
+                                c.cumulativeIonLoad.toFixed(3),
+                                'font-bold text-[var(--accent)]'
+                              )}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('cond_pct_load', idx, c, '% Ion load cond. (%)', `${c.condPercentLoad.toFixed(3)}%`, 'font-bold')}
+                            </td>
                           </>
                         )}
 
@@ -3171,18 +3607,46 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                               </span>
                             </td>
                             <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">{c.cycleEnd.toFixed(2)}</td>
-                            <td className="py-2 px-2.5 text-right text-[var(--ink-soft)]">{c.distance.toFixed(2)}</td>
-                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.silicaInMolM3, 6)}</td>
-                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.silicaOutMolM3, 6)}</td>
-                            <td className="py-2 px-2.5 text-right font-semibold">{fmtNum(wp?.dSilica, 6)}</td>
-                            <td className="py-2 px-2.5 text-right font-bold text-indigo-600 dark:text-indigo-400">
-                              {fmtNum(wp?.waSilica, 6)}
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('silica_dv', idx, c, 'ΔV (m³)', c.distance.toFixed(2), 'text-[var(--ink-soft)]')}
                             </td>
-                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.condInMolM3, 6)}</td>
-                            <td className="py-2 px-2.5 text-right">{fmtNum(wp?.condOutMolM3, 6)}</td>
-                            <td className="py-2 px-2.5 text-right font-semibold">{fmtNum(wp?.dCond, 6)}</td>
-                            <td className="py-2 px-2.5 text-right font-bold text-sky-600 dark:text-sky-400">
-                              {fmtNum(wp?.waCond, 6)}
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('silica_in_mol_m3', idx, c, 'Silica Inlet (mol/m³)', fmtNum(wp?.silicaInMolM3, 6))}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('silica_out_mol_m3', idx, c, 'Silica Outlet (mol/m³)', fmtNum(wp?.silicaOutMolM3, 6))}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('silica_delta', idx, c, 'ΔSilica (mol/m³)', fmtNum(wp?.dSilica, 6), 'font-semibold')}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell(
+                                'silica_wa',
+                                idx,
+                                c,
+                                'Weighted Avg of Silica (mol/m³)',
+                                fmtNum(wp?.waSilica, 6),
+                                'font-bold text-indigo-600 dark:text-indigo-400'
+                              )}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('cond_in_mol_m3', idx, c, 'Cond. Inlet (mol/m³)', fmtNum(wp?.condInMolM3, 6))}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('cond_out_mol_m3', idx, c, 'Cond. Outlet (mol/m³)', fmtNum(wp?.condOutMolM3, 6))}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell('cond_delta', idx, c, 'ΔCond. (mol/m³)', fmtNum(wp?.dCond, 6), 'font-semibold')}
+                            </td>
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell(
+                                'cond_wa',
+                                idx,
+                                c,
+                                'Weighted Avg of Cond. (mol/m³)',
+                                fmtNum(wp?.waCond, 6),
+                                'font-bold text-sky-600 dark:text-sky-400'
+                              )}
                             </td>
                           </>
                         )}
@@ -3200,20 +3664,55 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                               </span>
                             </td>
                             <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">{c.cycleEnd.toFixed(2)}</td>
-                            <td className="py-2 px-2.5 text-right font-bold text-indigo-600 dark:text-indigo-400">
-                              {fmtNum(wp?.waSilica, 6)}
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell(
+                                'silica_wa',
+                                idx,
+                                c,
+                                'Weighted Average of Silica (mol/m³)',
+                                fmtNum(wp?.waSilica, 6),
+                                'font-bold text-indigo-600 dark:text-indigo-400'
+                              )}
                             </td>
-                            <td className="py-2 px-2.5 text-right font-bold text-sky-600 dark:text-sky-400">
-                              {fmtNum(wp?.waCond, 6)}
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell(
+                                'cond_wa',
+                                idx,
+                                c,
+                                'Weighted Average of Cond. (mol/m³)',
+                                fmtNum(wp?.waCond, 6),
+                                'font-bold text-sky-600 dark:text-sky-400'
+                              )}
                             </td>
-                            <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">
-                              {fmtNum(wp?.totalWa, 6)}
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell(
+                                'pred_total_wa',
+                                idx,
+                                c,
+                                'Total Weighted Average (mol/m³)',
+                                fmtNum(wp?.totalWa, 6),
+                                'font-bold text-[var(--ink)]'
+                              )}
                             </td>
-                            <td className="py-2 px-2.5 text-right font-bold text-amber-600 dark:text-amber-400">
-                              {fmtNum(wp?.warnVolume, 2)}
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell(
+                                'pred_warn_90',
+                                idx,
+                                c,
+                                isTh ? 'จุดแจ้งเตือนระบบ (90%)' : 'System Warning (90%)',
+                                fmtNum(wp?.warnVolume, 2),
+                                'font-bold text-amber-600 dark:text-amber-400'
+                              )}
                             </td>
-                            <td className="py-2 px-2.5 text-right font-bold text-rose-600 dark:text-rose-400">
-                              {fmtNum(wp?.stopVolume, 2)}
+                            <td className="py-2 px-2.5 text-right">
+                              {renderFormulaLinkCell(
+                                'pred_stop_95',
+                                idx,
+                                c,
+                                isTh ? 'จุดหยุดระบบ (95%)' : 'System Stop (95%)',
+                                fmtNum(wp?.stopVolume, 2),
+                                'font-bold text-rose-600 dark:text-rose-400'
+                              )}
                             </td>
                           </>
                         )}

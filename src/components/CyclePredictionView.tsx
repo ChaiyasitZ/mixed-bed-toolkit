@@ -1032,7 +1032,6 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     displayValue: string,
     colorClass: string = ''
   ) => {
-    const isRowSelected = inspectedStepIndex === rowIndex;
     const isActiveFormulaCell =
       (highlightedFormula?.rowId === row.rowId && highlightedFormula?.formulaId === formulaId) ||
       returningCellKey === `${row.rowId}_${formulaId}`;
@@ -1046,12 +1045,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
             ? `คลิกเพื่อไปดูสูตรการคำนวณ "${columnLabel}" (รอบที่ #${row.step})`
             : `Click to view formula for "${columnLabel}" (Step #${row.step})`
         }
-        className={`table-link-cell ${
-          isActiveFormulaCell || isRowSelected ? 'table-link-cell-pulse' : ''
-        } ${colorClass}`}
+        className={`table-link-cell ${isActiveFormulaCell ? 'table-link-cell-pulse' : ''} ${colorClass}`}
       >
-        <span>{displayValue}</span>
-        <ArrowUpRight className="w-3 h-3 opacity-70 shrink-0" />
+        {displayValue}
       </button>
     );
   };
@@ -3008,8 +3004,8 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
                 <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
                 <span>
                   {isTh
-                    ? 'คลิกที่ค่าตัวเลขที่มีกรอบเส้นประในตาราง เพื่อเปิดดูสูตรการคำนวณและไฮไลท์วิธีแทนค่าของรอบนั้นทันที'
-                    : 'Click any dashed-link value in the table to jump to its formula and highlight the calculation.'}
+                    ? 'คลิกที่ค่าตัวเลขที่มีเส้นประขีดเส้นใต้ในตาราง เพื่อเปิดดูสูตรการคำนวณและไฮไลท์วิธีแทนค่าของรอบนั้นทันที'
+                    : 'Click any dashed-underlined value in the table to jump to its formula and highlight the calculation.'}
                 </span>
               </div>
               {highlightedFormula && (

@@ -184,12 +184,11 @@ input[type="number"] {
 
 @keyframes cellLinkBlink {
   0%, 100% {
-    background-color: rgba(14, 165, 233, 0.08);
-    box-shadow: 0 0 0 1px rgba(14, 165, 233, 0.35);
+    text-decoration-color: currentColor;
   }
   50% {
-    background-color: rgba(245, 158, 11, 0.22);
-    box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.65);
+    text-decoration-color: #f59e0b;
+    color: #f59e0b;
   }
 }
 
@@ -199,30 +198,26 @@ input[type="number"] {
 }
 
 .table-link-cell {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.25rem;
-  padding: 0.15rem 0.45rem;
-  border-radius: 0.45rem;
-  text-decoration: underline;
-  text-decoration-style: dotted;
-  text-underline-offset: 3px;
+  display: inline;
+  padding: 0;
+  border: none;
+  background: transparent;
+  text-decoration-line: underline;
+  text-decoration-style: dashed;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
   cursor: pointer;
-  background-color: rgba(14, 165, 233, 0.06);
-  border: 1px dashed rgba(14, 165, 233, 0.32);
-  transition: all 0.18s var(--ease-spring);
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
 }
 
 .table-link-cell:hover {
-  background-color: rgba(245, 158, 11, 0.18);
-  border-color: rgba(245, 158, 11, 0.75);
-  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.25);
-  transform: translateY(-1px);
+  text-decoration-color: #f59e0b;
+  color: #f59e0b;
 }
 
 .table-link-cell-pulse {
-  animation: cellLinkBlink 1.35s ease-in-out infinite;
+  animation: cellLinkBlink 1.2s ease-in-out infinite;
 }
 
 /* Smooth interactive transitions within 150-200ms latency budget */

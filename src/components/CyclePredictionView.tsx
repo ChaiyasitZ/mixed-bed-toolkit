@@ -617,7 +617,9 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     const activeSilicaCap = hasValidSilicaCap ? rawSilicaCap : defaultSilicaCapForTrain;
     const activeTotalCap = Number((activeCondCap + activeSilicaCap).toFixed(2));
 
-    // Determine source values: selected inspectorRow -> benchmark example (156.81 m³)
+    // Determine source values: selected inspectorRow -> benchmark example for active Train
+    const defaultExampleRow =
+      train === 'B' ? PLANT_TRAIN_B_BENCHMARK[0] : PLANT_TRAIN_A_BENCHMARK[0];
     const hasTypedCycle = false;
     const hasTypedCondIn = false;
     const hasTypedCondOut = false;
@@ -637,10 +639,10 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
         ? parseFloat(inputCycle)
         : lastCycle
           ? lastCycle.cycleEnd
-          : 156.81
+          : defaultExampleRow.cycleEnd
       : inspectorRow
         ? inspectorRow.cycleEnd
-        : 156.81;
+        : defaultExampleRow.cycleEnd;
 
     const distance = Number((currentCycleVol - prevCycleVol).toFixed(4));
     const cycleReady = isTypingAny ? hasTypedCycle : true;
@@ -656,14 +658,14 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
         : 0
       : inspectorRow
         ? inspectorRow.condIn
-        : 5.27;
+        : defaultExampleRow.condIn;
     const condOutVal = isTypingAny
       ? hasTypedCondOut
         ? parseFloat(inputCondOut)
         : 0
       : inspectorRow
         ? inspectorRow.condOut
-        : 0.076;
+        : defaultExampleRow.condOut;
 
     const condConcInMolL = condInVal / (1000 * 126.45);
     const condConcInMolM3 = condConcInMolL * 1000;
@@ -694,14 +696,14 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
         : 0
       : inspectorRow
         ? inspectorRow.silicaIn
-        : 185.3;
+        : defaultExampleRow.silicaIn;
     const silicaOutVal = isTypingAny
       ? hasTypedSilicaOut
         ? parseFloat(inputSilicaOut)
         : 0
       : inspectorRow
         ? inspectorRow.silicaOut
-        : 1.0;
+        : defaultExampleRow.silicaOut;
 
     const silicaConcInMolL = silicaInVal / 1_000_000 / 60.08;
     const silicaConcInMolM3 = silicaConcInMolL * 1000;
@@ -811,6 +813,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     defaultSilicaCapForTrain,
     lastCycle,
     inspectorRow,
+    train,
   ]);
 
   const flaggedRows = useMemo(() => {
@@ -2936,15 +2939,19 @@ return (
                       </div>
                     </div>
 
-                    {/* การคำนวณ Percent Load on Resin (Train A & Train B) */}
+                    {/* การคำนวณ Percent Load on Resin (แสดงเฉพาะ Train ที่กำลังเลือกใช้งาน) */}
                     <div className="p-3.5 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-2.5">
                       <div className="flex flex-col md:flex-row md:items-center justify-between gap-2 border-b border-[var(--line)] pb-2 font-sans">
                         <div>
                           <div className="text-xs sm:text-sm font-bold text-emerald-600 dark:text-emerald-400">
-                            การคำนวณ Percent Load on Resin
+                            {isTh
+                              ? `การคำนวณ Percent Load on Resin (Train ${train})`
+                              : `Percent Load on Resin Calculation (Train ${train})`}
                           </div>
                           <div className="text-xs text-[var(--ink-soft)]">
-                            สูตรทั่วไป: Percent Load on Resin (%) = [(Ion load Cond. + Ion load Silica) / Total Capacity] × 100
+                            {isTh
+                              ? 'สูตรทั่วไป: Percent Load on Resin (%) = [(Ion load Cond. + Ion load Silica) / Total Capacity] × 100'
+                              : 'General Formula: Percent Load on Resin (%) = [(Ion load Cond. + Ion load Silica) / Total Capacity] × 100'}
                           </div>
                         </div>
                         <div className="font-mono text-xs">
@@ -2963,34 +2970,100 @@ return (
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs font-sans">
-                        {/* Train A Reference */}
-                        <div className="p-2.5 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-1">
-                          <div className="font-bold text-emerald-600 dark:text-emerald-400">
-                            Train A
+                      <div className="text-xs font-sans">
+                        {train === 'A' ? (
+                          /* Train A Reference */
+                          <div className="p-3 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-1.5">
+                            <div className="font-bold text-emerald-600 dark:text-emerald-400">
+                              Train A
+                            </div>
+                            <ul className="space-y-1 text-[var(--ink-soft)] font-mono">
+                              <li className="flex items-baseline gap-2">
+                                <span className="select-none shrink-0">•</span>
+                                <span>
+                                  Estimate maximum conductivity capacity(mol) ={' '}
+                                  <strong className="text-[var(--ink)]">{liveFormulaCalc.activeCondCap.toFixed(2)}</strong>
+                                </span>
+                              </li>
+                              <li className="flex items-baseline gap-2">
+                                <span className="select-none shrink-0">•</span>
+                                <span>
+                                  Estimate maximum silica capacity(mol) ={' '}
+                                  <strong className="text-[var(--ink)]">{liveFormulaCalc.activeSilicaCap.toFixed(2)}</strong>
+                                </span>
+                              </li>
+                              <li className="flex items-baseline gap-2">
+                                <span className="select-none shrink-0">•</span>
+                                <span>
+                                  Total Capacity (100%) = {liveFormulaCalc.activeCondCap.toFixed(2)} +{' '}
+                                  {liveFormulaCalc.activeSilicaCap.toFixed(2)} ={' '}
+                                  <strong className="text-emerald-600 dark:text-emerald-400">
+                                    {liveFormulaCalc.activeTotalCap.toFixed(2)}
+                                  </strong>
+                                </span>
+                              </li>
+                              <li className="flex items-baseline gap-2">
+                                <span className="select-none shrink-0">•</span>
+                                <span className="font-sans">
+                                  {isTh ? 'จุดแจ้งเตือนระบบ (90%)' : 'System Warning (90%)'} ={' '}
+                                  <strong className="font-mono text-amber-500">
+                                    {fmtNum(weightedPrediction.warnMol, 2)} mol
+                                  </strong>{' '}
+                                  · {isTh ? 'จุดหยุดระบบ (95%)' : 'System Stop (95%)'} ={' '}
+                                  <strong className="font-mono text-rose-500">
+                                    {fmtNum(weightedPrediction.stopMol, 2)} mol
+                                  </strong>
+                                </span>
+                              </li>
+                            </ul>
                           </div>
-                          <ul className="space-y-0.5 text-[var(--ink-soft)] font-mono">
-                            <li>• Estimate maximum conductivity capacity(mol) = <strong className="text-[var(--ink)]">73.75</strong></li>
-                            <li>• Estimate maximum silica capacity(mol) = <strong className="text-[var(--ink)]">5.81</strong></li>
-                            <li>• Total Capacity (100%) = 73.75 + 5.81 = <strong className="text-emerald-600 dark:text-emerald-400">79.56</strong></li>
-                            <li className="font-sans">• จุดแจ้งเตือนระบบ (90%) = <strong className="text-amber-500">71.60 mol</strong> · จุดหยุดระบบ (95%) = <strong className="text-rose-500">75.58 mol</strong></li>
-                          </ul>
-                        </div>
-
-                        {/* Train B Reference */}
-                        <div className="p-2.5 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-1">
-                          <div className="font-bold text-sky-600 dark:text-sky-400">
-                            Train B
+                        ) : (
+                          /* Train B Reference */
+                          <div className="p-3 rounded-lg bg-[var(--bg)] border border-[var(--line)] space-y-1.5">
+                            <div className="font-bold text-sky-600 dark:text-sky-400">
+                              Train B
+                            </div>
+                            <ul className="space-y-1 text-[var(--ink-soft)] font-mono">
+                              <li className="flex items-baseline gap-2">
+                                <span className="select-none shrink-0">•</span>
+                                <span>
+                                  Estimate maximum conductivity capacity(mol) ={' '}
+                                  <strong className="text-[var(--ink)]">{liveFormulaCalc.activeCondCap.toFixed(2)}</strong>
+                                </span>
+                              </li>
+                              <li className="flex items-baseline gap-2">
+                                <span className="select-none shrink-0">•</span>
+                                <span>
+                                  Estimate maximum silica capacity(mol) ={' '}
+                                  <strong className="text-[var(--ink)]">{liveFormulaCalc.activeSilicaCap.toFixed(2)}</strong>
+                                </span>
+                              </li>
+                              <li className="flex items-baseline gap-2">
+                                <span className="select-none shrink-0">•</span>
+                                <span>
+                                  Total Capacity (100%) = {liveFormulaCalc.activeCondCap.toFixed(2)} +{' '}
+                                  {liveFormulaCalc.activeSilicaCap.toFixed(2)} ={' '}
+                                  <strong className="text-sky-600 dark:text-sky-400">
+                                    {liveFormulaCalc.activeTotalCap.toFixed(2)}
+                                  </strong>
+                                </span>
+                              </li>
+                              <li className="flex items-baseline gap-2">
+                                <span className="select-none shrink-0">•</span>
+                                <span className="font-sans">
+                                  {isTh ? 'จุดแจ้งเตือนระบบ (90%)' : 'System Warning (90%)'} ={' '}
+                                  <strong className="font-mono text-amber-500">
+                                    {fmtNum(weightedPrediction.warnMol, 2)} mol
+                                  </strong>{' '}
+                                  · {isTh ? 'จุดหยุดระบบ (95%)' : 'System Stop (95%)'} ={' '}
+                                  <strong className="font-mono text-rose-500">
+                                    {fmtNum(weightedPrediction.stopMol, 2)} mol
+                                  </strong>
+                                </span>
+                              </li>
+                            </ul>
                           </div>
-                          <ul className="space-y-0.5 text-[var(--ink-soft)] font-mono">
-                            <li>• Estimate maximum conductivity capacity(mol) = <strong className="text-[var(--ink)]">106.47</strong></li>
-                            <li className="font-sans">
-                              • <span className="font-mono">Estimate maximum silica capacity(mol) = <strong className="text-[var(--ink)]">5.93</strong></span>
-                            </li>
-                            <li>• Total Capacity (100%) = 106.47 + 5.93 = <strong className="text-sky-600 dark:text-sky-400">112.40</strong></li>
-                            <li className="font-sans">• จุดแจ้งเตือนระบบ (90%) = <strong className="text-amber-500">101.16 mol</strong> · จุดหยุดระบบ (95%) = <strong className="text-rose-500">106.78 mol</strong></li>
-                          </ul>
-                        </div>
+                        )}
                       </div>
                     </div>
                   </div>

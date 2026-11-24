@@ -86,11 +86,19 @@ export interface CycleRowItem {
   cumulativeSilicaLoad: number; // Cumulative Silica Ion Load (mol)
   stepSilicaPlusCondLoad: number; // Step 4 formula: Ion Concentration ที่หายไป (Silica) + Ion Load Cond (mol)
   silicaPercentLoad: number; // Step 5 formula: (Ion Load Silica / 5.7) * 100
-  // Combined (Cond + Silica) fields (Capacity = 74 + 5.7 = 79.7 mol)
+  // Combined (Cond + Silica) fields (Default Train A Capacity = 73.75 + 5.81 = 79.56 mol)
   totalCombinedIonLoad: number; // Ion Load Cond + Ion Load Silica (mol)
-  combinedPercentLoad: number; // (totalCombinedIonLoad / 79.7) * 100
+  combinedPercentLoad: number; // (totalCombinedIonLoad / totalCap) * 100
   percentLoad: number; // Active Percent Load on Resin (%)
   predictedCycle: number; // Predicted 95% System Stop Volume (m³)
+  // Weighted Average & Cycle Prediction fields per step
+  dCond?: number; // ΔCond. (mol/m³) = Cond. Inlet (mol/m³) − Cond. Outlet (mol/m³)
+  waCond?: number | null; // Weighted Average of Cond. (mol/m³) = Σ(ΔV × ΔCond.) ÷ Σ(ΔV)
+  dSilica?: number; // ΔSilica (mol/m³) = Silica Inlet (mol/m³) − Silica Outlet (mol/m³)
+  waSilica?: number | null; // Weighted Average of Silica (mol/m³) = Σ(ΔV × ΔSilica) ÷ Σ(ΔV)
+  totalWa?: number | null; // Total Weighted Average (mol/m³) = waSilica + waCond
+  predictedWarning90?: number | null; // Predicted 90% System Warning Volume (m³)
+  predictedStop95?: number | null; // Predicted 95% System Stop Volume (m³) (null when divisor is 0)
 }
 
 export interface CyclePredictionRecord {
@@ -306,10 +314,13 @@ export function recalculateBatchRows(
       sumDVxDCond += distance * netCondConc;
     }
 
-    const rowWaSilica = sumDV > 0 ? sumDVxDSilica / sumDV : 0;
-    const rowWaCond = sumDV > 0 ? sumDVxDCond / sumDV : 0;
+    const hasSumDV = sumDV > 0;
+    const rowWaSilica = hasSumDV ? sumDVxDSilica / sumDV : 0;
+    const rowWaCond = hasSumDV ? sumDVxDCond / sumDV : 0;
     const rowDenom = rowWaSilica + rowWaCond;
-    const predictedCycle = sumDV > 0 && Number.isFinite(rowDenom) && rowDenom > 1e-12 ? stopMol / rowDenom : 0;
+    const rowCanDivide = hasSumDV && Number.isFinite(rowDenom) && rowDenom > 1e-12;
+    const predictedWarning90 = rowCanDivide ? warnMol / rowDenom : 0;
+    const predictedCycle = rowCanDivide ? stopMol / rowDenom : 0;
 
     const cleanLabel =
       item.label && item.label.trim()
@@ -348,6 +359,13 @@ export function recalculateBatchRows(
       combinedPercentLoad: Number(combinedPercentLoad.toFixed(4)),
       percentLoad: Number(combinedPercentLoad.toFixed(4)),
       predictedCycle: Number(predictedCycle.toFixed(3)),
+      dCond: Number(netCondConc.toFixed(6)),
+      waCond: hasSumDV ? Number(rowWaCond.toFixed(6)) : null,
+      dSilica: Number(netSilicaConc.toFixed(6)),
+      waSilica: hasSumDV ? Number(rowWaSilica.toFixed(6)) : null,
+      totalWa: hasSumDV ? Number(rowDenom.toFixed(6)) : null,
+      predictedWarning90: rowCanDivide ? Number(predictedWarning90.toFixed(3)) : null,
+      predictedStop95: rowCanDivide ? Number(predictedCycle.toFixed(3)) : null,
     };
   });
 

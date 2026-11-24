@@ -7,14 +7,18 @@ import {
   Table2,
   ChevronDown,
   Check,
+  AlertCircle,
 } from 'lucide-react';
 import {
   CycleRowItem,
   CyclePredictionRecord,
   normalizeCycleRecordToBatch,
+  recalculateBatchRows,
   isNonPhysicalCycleRow,
   DEFAULT_COND_CAPACITY,
   DEFAULT_SILICA_CAPACITY,
+  DEFAULT_TRAIN_B_COND_CAPACITY,
+  DEFAULT_TRAIN_B_SILICA_CAPACITY,
 } from '../services/dataService';
 
 export type ExportFormat = 'excel' | 'csv' | 'txt' | 'json';
@@ -31,6 +35,34 @@ export interface BatchExportPayload {
   createdAt?: string;
 }
 
+interface EnrichedExportRow extends CycleRowItem {
+  dCond: number;
+  waCond: number | null;
+  dSilica: number;
+  waSilica: number | null;
+  totalWa: number | null;
+  predictedWarning90: number | null;
+  predictedStop95: number | null;
+}
+
+interface EnrichedBatchPayload {
+  batchName: string;
+  train: 'A' | 'B';
+  condCapacity: number;
+  silicaCapacity: number;
+  totalCapacity: number;
+  warnMol: number;
+  stopMol: number;
+  rows: EnrichedExportRow[];
+  finalWaSilica: number | null;
+  finalWaCond: number | null;
+  finalTotalWa: number | null;
+  predictedWarning90Volume: number | null;
+  predictedStop95Volume: number | null;
+  predictedBreakthroughVolume: number | null;
+  createdAt?: string;
+}
+
 function sanitizeFilename(name: string): string {
   return name.replace(/[\\/:*?"<>|\s]+/g, '_').replace(/^_+|_+$/g, '') || 'mixed_bed_data';
 }
@@ -40,10 +72,11 @@ function triggerDownload(blob: Blob, filename: string) {
   const link = document.createElement('a');
   link.href = url;
   link.download = filename;
+  link.style.display = 'none';
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
 function getRowControlStatus(c: CycleRowItem, isTh: boolean): string {
@@ -63,8 +96,11 @@ function getRowControlStatus(c: CycleRowItem, isTh: boolean): string {
   return isTh ? 'ปกติ (<90%)' : 'Normal (<90%)';
 }
 
-function escapeXml(unsafe: string | number): string {
+function escapeXml(unsafe: string | number | null | undefined): string {
+  if (unsafe === null || unsafe === undefined) return '';
   return String(unsafe)
+    // Strip invalid XML 1.0 control characters
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\uFFFE\uFFFF]/g, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
@@ -72,437 +108,742 @@ function escapeXml(unsafe: string | number): string {
     .replace(/'/g, '&apos;');
 }
 
-function escapeCsvCell(val: string | number): string {
+function escapeCsvCell(val: string | number | null | undefined): string {
+  if (val === null || val === undefined) return '';
   const str = String(val);
-  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
     return `"${str.replace(/"/g, '""')}"`;
   }
   return str;
 }
 
+function fmtExportFixed(val: number | null | undefined, digits: number, fallback: string = '—'): string {
+  if (val === null || val === undefined || !Number.isFinite(val)) return fallback;
+  return val.toFixed(digits);
+}
+
+/**
+ * Guarantees a unique, valid Excel Worksheet name (<= 31 chars, no \ / ? * [ ] :)
+ */
+function makeUniqueSheetName(rawName: string, usedNames: Set<string>, fallbackIndex: number): string {
+  let cleaned = rawName
+    .replace(/[\\/?*[\]:']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) {
+    cleaned = `Sheet_${fallbackIndex}`;
+  }
+  let candidate = cleaned.slice(0, 31).trim();
+  let counter = 2;
+  while (usedNames.has(candidate.toLowerCase())) {
+    const suffix = `_${counter}`;
+    candidate = `${cleaned.slice(0, Math.max(1, 31 - suffix.length)).trim()}${suffix}`;
+    counter += 1;
+  }
+  usedNames.add(candidate.toLowerCase());
+  return candidate;
+}
+
+/**
+ * Deterministically enriches any BatchExportPayload so that all 5 tabs' columns
+ * (including ΔSilica, Weighted Average of Silica, ΔCond., Weighted Average of Cond.,
+ * Total Weighted Average, 90% System Warning, and 95% System Stop) are populated
+ * with full precision and single-source-of-truth consistency.
+ */
+function enrichBatchForExport(b: BatchExportPayload, isTh: boolean): EnrichedBatchPayload {
+  const isTrainB = b.train === 'B' || (!b.train && b.batchName.includes('B'));
+  const defaultCond = isTrainB ? DEFAULT_TRAIN_B_COND_CAPACITY : DEFAULT_COND_CAPACITY;
+  const defaultSilica = isTrainB ? DEFAULT_TRAIN_B_SILICA_CAPACITY : DEFAULT_SILICA_CAPACITY;
+
+  const condCapacity = Number.isFinite(b.condCapacity) && b.condCapacity > 0 ? b.condCapacity : defaultCond;
+  const silicaCapacity = Number.isFinite(b.silicaCapacity) && b.silicaCapacity > 0 ? b.silicaCapacity : defaultSilica;
+  const totalCapacity = Number((condCapacity + silicaCapacity).toFixed(4));
+  const warnMol = Number((totalCapacity * 0.9).toFixed(2));
+  const stopMol = Number((totalCapacity * 0.95).toFixed(2));
+
+  const recalc = recalculateBatchRows(
+    (b.rows || []).map((r) => ({
+      rowId: r.rowId,
+      label: r.label,
+      cycleEnd: r.cycleEnd,
+      condIn: r.condIn,
+      condOut: r.condOut,
+      silicaIn: r.silicaIn,
+      silicaOut: r.silicaOut,
+    })),
+    condCapacity,
+    isTh,
+    false,
+    silicaCapacity
+  );
+
+  let sumDV = 0;
+  let sumDVxDSilica = 0;
+  let sumDVxDCond = 0;
+
+  const enrichedRows: EnrichedExportRow[] = recalc.rows.map((r) => {
+    const dSilica = r.silicaConcInMolM3 - r.silicaConcOutMolM3;
+    const dCond = r.concInMolM3 - r.concOutMolM3;
+    const isValid =
+      [r.cycleEnd, r.silicaIn, r.silicaOut, r.condIn, r.condOut].every((v) => Number.isFinite(v) && v >= 0) &&
+      r.distance > 0 &&
+      dSilica >= 0 &&
+      dCond >= 0;
+
+    if (isValid) {
+      sumDV += r.distance;
+      sumDVxDSilica += r.distance * dSilica;
+      sumDVxDCond += r.distance * dCond;
+    }
+
+    const hasSumDV = sumDV > 0;
+    const waSilica = hasSumDV ? sumDVxDSilica / sumDV : null;
+    const waCond = hasSumDV ? sumDVxDCond / sumDV : null;
+    const totalWa = waSilica !== null && waCond !== null ? waSilica + waCond : null;
+    const canDivide = totalWa !== null && Number.isFinite(totalWa) && totalWa > 1e-12;
+
+    return {
+      ...r,
+      dCond,
+      waCond,
+      dSilica,
+      waSilica,
+      totalWa,
+      predictedWarning90: canDivide ? warnMol / (totalWa as number) : null,
+      predictedStop95: canDivide ? stopMol / (totalWa as number) : null,
+    };
+  });
+
+  const finalWaSilica = sumDV > 0 ? sumDVxDSilica / sumDV : null;
+  const finalWaCond = sumDV > 0 ? sumDVxDCond / sumDV : null;
+  const finalTotalWa = finalWaSilica !== null && finalWaCond !== null ? finalWaSilica + finalWaCond : null;
+  const canDivideFinal = finalTotalWa !== null && Number.isFinite(finalTotalWa) && finalTotalWa > 1e-12;
+
+  return {
+    batchName: b.batchName || (isTh ? 'ชุดข้อมูลคาดการณ์ Cycle' : 'Cycle Batch'),
+    train: isTrainB ? 'B' : 'A',
+    condCapacity,
+    silicaCapacity,
+    totalCapacity,
+    warnMol,
+    stopMol,
+    rows: enrichedRows,
+    finalWaSilica,
+    finalWaCond,
+    finalTotalWa,
+    predictedWarning90Volume: canDivideFinal ? warnMol / (finalTotalWa as number) : null,
+    predictedStop95Volume: canDivideFinal ? stopMol / (finalTotalWa as number) : null,
+    predictedBreakthroughVolume: canDivideFinal ? totalCapacity / (finalTotalWa as number) : null,
+    createdAt: b.createdAt,
+  };
+}
+
+interface ExcelColumnSpec<T> {
+  header: string;
+  width: number;
+  getValue: (row: T) => number | string | null | undefined;
+  type: 'number' | 'string';
+  decimals?: number;
+}
+
+function buildWorksheetXml<T>(
+  sheetName: string,
+  titleText: string,
+  subtitleText: string,
+  columns: ExcelColumnSpec<T>[],
+  rows: T[],
+  getRowTone: (row: T) => 'normal' | 'warn' | 'stop'
+): string {
+  const colCount = Math.max(1, columns.length);
+  const mergeAcross = colCount - 1;
+
+  const colsXml = columns.map((c) => `<Column ss:Width="${c.width}"/>`).join('\n            ');
+  const headersXml = columns
+    .map((c) => `<Cell ss:StyleID="sHeader"><Data ss:Type="String">${escapeXml(c.header)}</Data></Cell>`)
+    .join('');
+
+  const dataRowsXml = rows
+    .map((r) => {
+      const tone = getRowTone(r);
+      const baseStyle = tone === 'stop' ? 'sStopRow' : tone === 'warn' ? 'sWarnRow' : 'sNormalRow';
+
+      const cellsXml = columns
+        .map((col) => {
+          const raw = col.getValue(r);
+          if (col.type === 'number') {
+            const num = typeof raw === 'number' ? raw : Number(raw);
+            if (raw === null || raw === undefined || !Number.isFinite(num)) {
+              return `<Cell ss:StyleID="${baseStyle}"><Data ss:Type="String">—</Data></Cell>`;
+            }
+            const rounded = col.decimals !== undefined ? Number(num.toFixed(col.decimals)) : num;
+            return `<Cell ss:StyleID="${baseStyle}"><Data ss:Type="Number">${rounded}</Data></Cell>`;
+          }
+          const text = raw === null || raw === undefined || raw === '' ? '—' : String(raw);
+          return `<Cell ss:StyleID="${baseStyle}"><Data ss:Type="String">${escapeXml(text)}</Data></Cell>`;
+        })
+        .join('\n              ');
+
+      return `<Row ss:Height="20">
+              ${cellsXml}
+            </Row>`;
+    })
+    .join('\n            ');
+
+  return `<Worksheet ss:Name="${escapeXml(sheetName)}">
+          <Table>
+            ${colsXml}
+            <Row ss:Height="24">
+              <Cell ss:MergeAcross="${mergeAcross}" ss:StyleID="sTitle">
+                <Data ss:Type="String">${escapeXml(titleText)}</Data>
+              </Cell>
+            </Row>
+            <Row ss:Height="20">
+              <Cell ss:MergeAcross="${mergeAcross}" ss:StyleID="sSubtitle">
+                <Data ss:Type="String">${escapeXml(subtitleText)}</Data>
+              </Cell>
+            </Row>
+            <Row ss:Height="24">
+              ${headersXml}
+            </Row>
+            ${dataRowsXml}
+          </Table>
+        </Worksheet>`;
+}
+
 /**
  * Export one or more batches in the specified format ('excel' | 'csv' | 'txt' | 'json')
+ * Returns true if export succeeded, false if an error occurred.
  */
 export function exportBatchesToFile(
   batches: BatchExportPayload[],
   format: ExportFormat,
   isTh: boolean = true,
   customFilenamePrefix?: string
-) {
-  if (!batches || batches.length === 0) return;
+): boolean {
+  if (!batches || batches.length === 0) return false;
 
-  const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
-  const basePrefix =
-    customFilenamePrefix ||
-    (batches.length === 1 ? sanitizeFilename(batches[0].batchName) : 'mixed_bed_all_batches');
+  try {
+    const enrichedBatches = batches.map((b) => enrichBatchForExport(b, isTh));
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    const basePrefix =
+      customFilenamePrefix ||
+      (enrichedBatches.length === 1
+        ? sanitizeFilename(enrichedBatches[0].batchName)
+        : 'mixed_bed_all_batches');
 
-  if (format === 'json') {
-    const jsonPayload = {
-      exportedAt: new Date().toISOString(),
-      batchCount: batches.length,
-      batches: batches.map((b) => {
-        const totalCap = b.condCapacity + b.silicaCapacity;
-        const warnMol = Number((totalCap * 0.90).toFixed(2));
-        const stopMol = Number((totalCap * 0.95).toFixed(2));
-        const lastRow = b.rows[b.rows.length - 1];
-        const stop95 = b.predictedStop95Volume ?? (lastRow ? lastRow.predictedCycle : 0);
-        const warn90 =
-          b.predictedWarning90Volume ??
-          (stop95 > 0 && stopMol > 0 ? Number(((stop95 * warnMol) / stopMol).toFixed(3)) : 0);
-        return {
-          batchName: b.batchName,
-          train: b.train || 'A',
-          estimateMaximumConductivityCapacityMol: b.condCapacity,
-          estimateMaximumSilicaCapacityMol: b.silicaCapacity,
-          totalResinCapacityMol: Number(totalCap.toFixed(3)),
-          warning90ThresholdMol: warnMol,
-          stop95ThresholdMol: stopMol,
-          rowCount: b.rows.length,
-          summary: {
-            currentWaterVolumeM3: lastRow ? lastRow.cycleEnd : 0,
-            currentCombinedIonLoadMol: lastRow ? lastRow.totalCombinedIonLoad : 0,
-            currentCombinedPercentLoad: lastRow ? lastRow.combinedPercentLoad : 0,
-            currentSilicaIonLoadMol: lastRow ? lastRow.cumulativeSilicaLoad : 0,
-            currentSilicaPercentLoad: lastRow ? lastRow.silicaPercentLoad : 0,
-            predictedWarning90VolumeM3: warn90,
-            predictedStop95VolumeM3: stop95,
-          },
-          rows: b.rows.map((r) => ({
-            step: r.step,
-            label: r.label,
-            cycleStartM3: r.cycleStart,
-            cycleEndM3: r.cycleEnd,
-            deltaVolumeM3: r.distance,
-            silicaInPpb: r.silicaIn,
-            silicaOutPpb: r.silicaOut,
-            silicaConcInMolL: r.silicaConcInMolL,
-            silicaConcInMolM3: r.silicaConcInMolM3,
-            silicaConcOutMolL: r.silicaConcOutMolL,
-            silicaConcOutMolM3: r.silicaConcOutMolM3,
-            silicaIonsRemovedMol: r.silicaIonsRemoved,
-            cumulativeSilicaLoadMol: r.cumulativeSilicaLoad,
-            silicaPercentLoad: r.silicaPercentLoad,
-            condInUsCm: r.condIn,
-            condOutUsCm: r.condOut,
-            condConcInMolM3: r.concInMolM3,
-            condConcOutMolM3: r.concOutMolM3,
-            condIonsRemovedMol: r.ionsRemoved,
-            cumulativeCondLoadMol: r.cumulativeIonLoad,
-            totalCombinedIonLoadMol: r.totalCombinedIonLoad,
-            combinedPercentLoad: r.combinedPercentLoad,
-            predictedStop95M3: r.predictedCycle,
-            status: getRowControlStatus(r, isTh),
-          })),
-        };
-      }),
-    };
+    if (format === 'json') {
+      const jsonPayload = {
+        exportedAt: new Date().toISOString(),
+        batchCount: enrichedBatches.length,
+        batches: enrichedBatches.map((b) => {
+          const lastRow = b.rows[b.rows.length - 1];
+          return {
+            batchName: b.batchName,
+            train: b.train,
+            estimateMaximumConductivityCapacityMol: b.condCapacity,
+            estimateMaximumSilicaCapacityMol: b.silicaCapacity,
+            totalResinCapacityMol: Number(b.totalCapacity.toFixed(2)),
+            warning90ThresholdMol: b.warnMol,
+            stop95ThresholdMol: b.stopMol,
+            rowCount: b.rows.length,
+            summary: {
+              currentWaterVolumeM3: lastRow ? Number(lastRow.cycleEnd.toFixed(2)) : 0,
+              weightedAverageSilicaMolM3:
+                b.finalWaSilica !== null ? Number(b.finalWaSilica.toFixed(6)) : null,
+              weightedAverageCondMolM3:
+                b.finalWaCond !== null ? Number(b.finalWaCond.toFixed(6)) : null,
+              totalWeightedAverageMolM3:
+                b.finalTotalWa !== null ? Number(b.finalTotalWa.toFixed(6)) : null,
+              currentCondIonLoadMol: lastRow ? Number(lastRow.cumulativeIonLoad.toFixed(3)) : 0,
+              currentCondPercentLoad: lastRow ? Number(lastRow.condPercentLoad.toFixed(3)) : 0,
+              currentSilicaIonLoadMol: lastRow ? Number(lastRow.cumulativeSilicaLoad.toFixed(3)) : 0,
+              currentSilicaPercentLoad: lastRow ? Number(lastRow.silicaPercentLoad.toFixed(3)) : 0,
+              currentCombinedIonLoadMol: lastRow ? Number(lastRow.totalCombinedIonLoad.toFixed(3)) : 0,
+              currentCombinedPercentLoad: lastRow ? Number(lastRow.combinedPercentLoad.toFixed(3)) : 0,
+              predictedWarning90VolumeM3:
+                b.predictedWarning90Volume !== null
+                  ? Number(b.predictedWarning90Volume.toFixed(2))
+                  : null,
+              predictedStop95VolumeM3:
+                b.predictedStop95Volume !== null
+                  ? Number(b.predictedStop95Volume.toFixed(2))
+                  : null,
+              predictedBreakthrough100VolumeM3:
+                b.predictedBreakthroughVolume !== null
+                  ? Number(b.predictedBreakthroughVolume.toFixed(2))
+                  : null,
+            },
+            rows: b.rows.map((r) => ({
+              step: r.step,
+              label: r.label,
+              cycleStartM3: Number(r.cycleStart.toFixed(2)),
+              cycleEndM3: Number(r.cycleEnd.toFixed(2)),
+              deltaVolumeM3: Number(r.distance.toFixed(2)),
+              // Silica
+              silicaInPpb: Number(r.silicaIn.toFixed(2)),
+              silicaOutPpb: Number(r.silicaOut.toFixed(2)),
+              silicaConcInMolL: Number(r.silicaConcInMolL.toFixed(7)),
+              silicaConcInMolM3: Number(r.silicaConcInMolM3.toFixed(6)),
+              silicaConcOutMolL: Number(r.silicaConcOutMolL.toFixed(8)),
+              silicaConcOutMolM3: Number(r.silicaConcOutMolM3.toFixed(6)),
+              deltaSilicaMolM3: Number(r.dSilica.toFixed(6)),
+              weightedAverageSilicaMolM3:
+                r.waSilica !== null ? Number(r.waSilica.toFixed(6)) : null,
+              silicaIonsRemovedMol: Number(r.silicaIonsRemoved.toFixed(3)),
+              cumulativeSilicaLoadMol: Number(r.cumulativeSilicaLoad.toFixed(3)),
+              silicaPercentLoad: Number(r.silicaPercentLoad.toFixed(3)),
+              // Conductivity
+              condInUsCm: Number(r.condIn.toFixed(3)),
+              condOutUsCm: Number(r.condOut.toFixed(3)),
+              condConcInMolL: Number(r.concInMolL.toFixed(8)),
+              condConcInMolM3: Number(r.concInMolM3.toFixed(6)),
+              condConcOutMolL: Number(r.concOutMolL.toFixed(9)),
+              condConcOutMolM3: Number(r.concOutMolM3.toFixed(6)),
+              deltaCondMolM3: Number(r.dCond.toFixed(6)),
+              weightedAverageCondMolM3:
+                r.waCond !== null ? Number(r.waCond.toFixed(6)) : null,
+              condIonsRemovedMol: Number(r.ionsRemoved.toFixed(3)),
+              cumulativeCondLoadMol: Number(r.cumulativeIonLoad.toFixed(3)),
+              condPercentLoad: Number(r.condPercentLoad.toFixed(3)),
+              // Combined & Cycle Prediction
+              totalWeightedAverageMolM3:
+                r.totalWa !== null ? Number(r.totalWa.toFixed(6)) : null,
+              predictedWarning90M3:
+                r.predictedWarning90 !== null ? Number(r.predictedWarning90.toFixed(2)) : null,
+              predictedStop95M3:
+                r.predictedStop95 !== null ? Number(r.predictedStop95.toFixed(2)) : null,
+              totalCombinedIonLoadMol: Number(r.totalCombinedIonLoad.toFixed(3)),
+              combinedPercentLoad: Number(r.combinedPercentLoad.toFixed(3)),
+              status: getRowControlStatus(r, isTh),
+            })),
+          };
+        }),
+      };
 
-    const blob = new Blob([JSON.stringify(jsonPayload, null, 2)], {
-      type: 'application/json;charset=utf-8',
-    });
-    triggerDownload(blob, `${basePrefix}_${timestamp}.json`);
-    return;
-  }
-
-  if (format === 'csv') {
-    const headers = [
-      isTh ? 'ชื่อชุดข้อมูล (Batch)' : 'Batch Name',
-      isTh ? 'สายการผลิต (Train)' : 'Train',
-      isTh ? 'ลำดับ (Step)' : 'Step',
-      isTh ? 'ป้ายกำกับ (Label)' : 'Label',
-      'Cycle (m³)',
-      isTh ? 'ระยะห่าง ΔV (m³)' : 'Delta V (m³)',
-      'Silica MB Inlet (ppb)',
-      'Silica MB Outlet (ppb)',
-      'Conc. Silica In (mol/L)',
-      'Conc. Silica In (mol/m³)',
-      'Conc. Silica Out (mol/L)',
-      'Conc. Silica Out (mol/m³)',
-      isTh ? 'Ion Silica ที่หายไป (mol)' : 'Silica Removed (mol)',
-      isTh ? 'Ion Load Silica สะสม (mol)' : 'Cum. Silica Load (mol)',
-      '% Load Silica (%)',
-      'Cond. MB Inlet (µS/cm)',
-      'Cond MB Outlet (µS/cm)',
-      'Conc. Cond In (mol/m³)',
-      'Conc. Cond Out (mol/m³)',
-      isTh ? 'Ion Cond ที่หายไป (mol)' : 'Cond Removed (mol)',
-      isTh ? 'Ion Load Cond สะสม (mol)' : 'Cum. Cond Load (mol)',
-      isTh ? 'Ion Load รวม (mol)' : 'Total Combined Load (mol)',
-      '% Load on Resin (%)',
-      isTh ? 'จุดหยุดระบบ 95% (m³)' : 'Predicted 95% System Stop (m³)',
-      isTh ? 'สถานะการควบคุม' : 'Control Status',
-    ];
-
-    const csvLines: string[] = [headers.map(escapeCsvCell).join(',')];
-
-    batches.forEach((b) => {
-      b.rows.forEach((c) => {
-        const rowCells = [
-          b.batchName,
-          b.train || 'A',
-          c.step,
-          c.label,
-          c.cycleEnd.toFixed(3),
-          c.distance.toFixed(3),
-          c.silicaIn.toFixed(3),
-          c.silicaOut.toFixed(3),
-          c.silicaConcInMolL.toFixed(7),
-          c.silicaConcInMolM3.toFixed(3),
-          c.silicaConcOutMolL.toFixed(8),
-          c.silicaConcOutMolM3.toFixed(3),
-          c.silicaIonsRemoved.toFixed(3),
-          c.cumulativeSilicaLoad.toFixed(3),
-          `${c.silicaPercentLoad.toFixed(3)}%`,
-          c.condIn.toFixed(3),
-          c.condOut.toFixed(3),
-          c.concInMolM3.toFixed(3),
-          c.concOutMolM3.toFixed(3),
-          c.ionsRemoved.toFixed(3),
-          c.cumulativeIonLoad.toFixed(3),
-          c.totalCombinedIonLoad.toFixed(3),
-          `${c.combinedPercentLoad.toFixed(3)}%`,
-          c.predictedCycle.toFixed(3),
-          getRowControlStatus(c, isTh),
-        ];
-        csvLines.push(rowCells.map(escapeCsvCell).join(','));
+      const blob = new Blob([JSON.stringify(jsonPayload, null, 2)], {
+        type: 'application/json;charset=utf-8',
       });
-    });
+      triggerDownload(blob, `${basePrefix}_${timestamp}.json`);
+      return true;
+    }
 
-    const blob = new Blob(['\uFEFF' + csvLines.join('\r\n')], {
-      type: 'text/csv;charset=utf-8',
-    });
-    triggerDownload(blob, `${basePrefix}_${timestamp}.csv`);
-    return;
-  }
+    if (format === 'csv') {
+      const headers = [
+        isTh ? 'ชื่อชุดข้อมูล (Batch)' : 'Batch Name',
+        isTh ? 'สายการผลิต (Train)' : 'Train',
+        '#',
+        isTh ? 'รอบ' : 'Step Label',
+        'Cycle (m³)',
+        'ΔV (m³)',
+        // Tab 1: Raw Inputs
+        'Silica MB Inlet/RO Outlet (ppb)',
+        'Silica MB Outlet (ppb)',
+        'Cond. MB Inlet/RO Outlet (µS/cm)',
+        'Cond MB Outlet (µS/cm)',
+        // Tab 2: Silica Calculation
+        'Silica Inlet (mol/L)',
+        'Silica Inlet (mol/m³)',
+        'Silica Outlet (mol/L)',
+        'Silica Outlet (mol/m³)',
+        'ΔSilica (mol/m³)',
+        'Weighted Avg of Silica (mol/m³)',
+        isTh ? 'Ion ที่ใช้ไป Silica (mol)' : 'Silica Ions Consumed (mol)',
+        'Ion load silica (mol)',
+        '%Ion load silica (%)',
+        // Tab 3: Conductivity Calculation
+        'Cond. Inlet (mol/L)',
+        'Cond. Inlet (mol/m³)',
+        'Cond. Outlet (mol/L)',
+        'Cond. Outlet (mol/m³)',
+        'ΔCond. (mol/m³)',
+        'Weighted Avg of Cond. (mol/m³)',
+        isTh ? 'Ion ที่ใช้ไป Cond. (mol)' : 'Cond. Ions Consumed (mol)',
+        'Ion load cond. (mol)',
+        '%Ion load cond. (%)',
+        // Tab 4 & 5: Cycle Prediction & Combined Load
+        'Total Weighted Average (mol/m³)',
+        isTh ? 'จุดแจ้งเตือนระบบ (90%) (m³)' : 'System Warning (90%) (m³)',
+        isTh ? 'จุดหยุดระบบ (95%) (m³)' : 'System Stop (95%) (m³)',
+        isTh ? 'Ion Load รวม (mol)' : 'Total Combined Load (mol)',
+        'Percent Load on Resin (%)',
+        isTh ? 'สถานะการควบคุม' : 'Control Status',
+      ];
 
-  if (format === 'txt') {
-    const divider = '='.repeat(108);
-    const subDivider = '-'.repeat(108);
-    const lines: string[] = [];
+      const csvLines: string[] = [headers.map(escapeCsvCell).join(',')];
 
-    lines.push(divider);
-    lines.push(
-      isTh
-        ? 'รายงานการควบคุม Percent Load on Resin และทำนายรอบการผลิต (Mixed Bed System Report)'
-        : 'MIXED BED RESIN LOAD CONTROL & CYCLE FORECASTING REPORT'
-    );
-    lines.push(
-      `${isTh ? 'วันที่ส่งออกข้อมูล' : 'Exported At'}: ${new Date().toLocaleString(
-        isTh ? 'th-TH' : 'en-US'
-      )}`
-    );
-    lines.push(divider);
-    lines.push('');
+      enrichedBatches.forEach((b) => {
+        b.rows.forEach((c) => {
+          const rowCells = [
+            b.batchName,
+            b.train,
+            c.step,
+            c.label,
+            c.cycleEnd.toFixed(2),
+            c.distance.toFixed(2),
+            // Tab 1
+            c.silicaIn.toFixed(2),
+            c.silicaOut.toFixed(2),
+            c.condIn.toFixed(3),
+            c.condOut.toFixed(3),
+            // Tab 2
+            c.silicaConcInMolL.toFixed(7),
+            c.silicaConcInMolM3.toFixed(6),
+            c.silicaConcOutMolL.toFixed(8),
+            c.silicaConcOutMolM3.toFixed(6),
+            c.dSilica.toFixed(6),
+            fmtExportFixed(c.waSilica, 6),
+            c.silicaIonsRemoved.toFixed(3),
+            c.cumulativeSilicaLoad.toFixed(3),
+            `${c.silicaPercentLoad.toFixed(3)}%`,
+            // Tab 3
+            c.concInMolL.toFixed(8),
+            c.concInMolM3.toFixed(6),
+            c.concOutMolL.toFixed(9),
+            c.concOutMolM3.toFixed(6),
+            c.dCond.toFixed(6),
+            fmtExportFixed(c.waCond, 6),
+            c.ionsRemoved.toFixed(3),
+            c.cumulativeIonLoad.toFixed(3),
+            `${c.condPercentLoad.toFixed(3)}%`,
+            // Tab 4 & 5
+            fmtExportFixed(c.totalWa, 6),
+            fmtExportFixed(c.predictedWarning90, 2),
+            fmtExportFixed(c.predictedStop95, 2),
+            c.totalCombinedIonLoad.toFixed(3),
+            `${c.combinedPercentLoad.toFixed(3)}%`,
+            getRowControlStatus(c, isTh),
+          ];
+          csvLines.push(rowCells.map(escapeCsvCell).join(','));
+        });
+      });
 
-    batches.forEach((b, bIdx) => {
-      const totalCap = b.condCapacity + b.silicaCapacity;
-      const warnMol = Number((totalCap * 0.90).toFixed(2));
-      const stopMol = Number((totalCap * 0.95).toFixed(2));
-      const lastRow = b.rows[b.rows.length - 1];
-      const stop95 = b.predictedStop95Volume ?? (lastRow ? lastRow.predictedCycle : 0);
-      const warn90 =
-        b.predictedWarning90Volume ??
-        (stop95 > 0 && stopMol > 0 ? Number(((stop95 * warnMol) / stopMol).toFixed(3)) : 0);
+      const blob = new Blob(['\uFEFF' + csvLines.join('\r\n')], {
+        type: 'text/csv;charset=utf-8',
+      });
+      triggerDownload(blob, `${basePrefix}_${timestamp}.csv`);
+      return true;
+    }
 
+    if (format === 'txt') {
+      const divider = '='.repeat(126);
+      const subDivider = '-'.repeat(126);
+      const lines: string[] = [];
+
+      lines.push(divider);
       lines.push(
-        `[${bIdx + 1}] ${isTh ? 'ชุดข้อมูล (Batch)' : 'Batch'}: ${b.batchName} (Train ${
-          b.train || 'A'
-        })`
+        isTh
+          ? 'รายงานการคำนวณและคาดการณ์ Cycle ของระบบ Mixed Bed (Conductivity, Silica, Weighted Average & Cycle Prediction)'
+          : 'MIXED BED RESIN LOAD CONTROL, WEIGHTED AVERAGE & CYCLE FORECASTING REPORT'
       );
       lines.push(
-        `    • Estimate maximum conductivity capacity(mol): ${b.condCapacity.toFixed(3)} mol | Estimate maximum silica capacity(mol): ${b.silicaCapacity.toFixed(
-          3
-        )} mol | ${isTh ? 'ความจุเรซินรวม (100%)' : 'Total Capacity (100%)'}: ${totalCap.toFixed(3)} mol`
+        `${isTh ? 'วันที่ส่งออกข้อมูล' : 'Exported At'}: ${new Date().toLocaleString(
+          isTh ? 'th-TH' : 'en-US'
+        )}`
       );
-      lines.push(
-        `    • ${
-          isTh ? 'ปริมาตรน้ำที่ผลิตได้ ณ ปัจจุบัน' : 'Current Water Volume'
-        }: ${(lastRow ? lastRow.cycleEnd : 0).toFixed(2)} m³ (${b.rows.length} ${
-          isTh ? 'รอบ' : 'steps'
-        })`
-      );
-      lines.push(
-        `    • ${isTh ? 'จุดแจ้งเตือนระบบ 90%' : 'System Warning 90%'}: ${warn90.toFixed(
-          2
-        )} m³ (${(totalCap * 0.90).toFixed(3)} mol)`
-      );
-      lines.push(
-        `    • ${
-          isTh ? 'จุดหยุดระบบ 95% เพื่อ Regeneration' : 'System Stop 95% (Regen)'
-        }: ${stop95.toFixed(2)} m³ (${(totalCap * 0.95).toFixed(3)} mol)`
-      );
-      lines.push(
-        `    • ${isTh ? '% Load on Resin ปัจจุบัน' : 'Current % Load'}: ${(lastRow
-          ? lastRow.combinedPercentLoad
-          : 0
-        ).toFixed(3)}% (Ion Load รวม ${(lastRow ? lastRow.totalCombinedIonLoad : 0).toFixed(
-          3
-        )} mol | Silica ${(lastRow ? lastRow.silicaPercentLoad : 0).toFixed(3)}%)`
-      );
-      lines.push(subDivider);
+      lines.push(divider);
+      lines.push('');
 
       const pad = (val: string, len: number, align: 'left' | 'right' = 'right') =>
         align === 'left' ? val.padEnd(len, ' ') : val.padStart(len, ' ');
 
-      lines.push(
-        [
-          pad('#', 4, 'left'),
-          pad(isTh ? 'รอบ (Step)' : 'Step', 14, 'left'),
-          pad('Cycle(m³)', 11),
-          pad('ΔV(m³)', 10),
-          pad('Si In/Out', 15),
-          pad('Cond In/Out', 15),
-          pad('Load รวม(mol)', 14),
-          pad('%Load รวม', 11),
-          pad('%Silica', 10),
-          '  ' + (isTh ? 'สถานะการควบคุม' : 'Status'),
-        ].join(' ')
-      );
-      lines.push(subDivider);
+      enrichedBatches.forEach((b, bIdx) => {
+        const lastRow = b.rows[b.rows.length - 1];
 
-      b.rows.forEach((c) => {
+        lines.push(
+          `[${bIdx + 1}] ${isTh ? 'ชุดข้อมูล (Batch)' : 'Batch'}: ${b.batchName} (Mixed Bed Train ${b.train})`
+        );
+        lines.push(
+          `    • Estimate maximum conductivity capacity(mol) = ${b.condCapacity.toFixed(2)} | Estimate maximum silica capacity(mol) = ${b.silicaCapacity.toFixed(2)} | Total Capacity (100%) = ${b.totalCapacity.toFixed(2)} mol`
+        );
+        lines.push(
+          `    • ${isTh ? 'จุดแจ้งเตือนระบบ (90%)' : 'System Warning (90%)'} = ${b.warnMol.toFixed(2)} mol → ${fmtExportFixed(b.predictedWarning90Volume, 2)} m³ | ${isTh ? 'จุดหยุดระบบ (95%)' : 'System Stop (95%)'} = ${b.stopMol.toFixed(2)} mol → ${fmtExportFixed(b.predictedStop95Volume, 2)} m³`
+        );
+        lines.push(
+          `    • Weighted Average of Silica = ${fmtExportFixed(b.finalWaSilica, 6)} mol/m³ | Weighted Average of Cond. = ${fmtExportFixed(b.finalWaCond, 6)} mol/m³ | Total Weighted Average = ${fmtExportFixed(b.finalTotalWa, 6)} mol/m³`
+        );
+        lines.push(
+          `    • ${isTh ? 'ปริมาตรน้ำสะสมปัจจุบัน' : 'Current Water Volume'}: ${(lastRow ? lastRow.cycleEnd : 0).toFixed(2)} m³ (${b.rows.length} ${isTh ? 'รอบ' : 'steps'}) | Percent Load on Resin = ${(lastRow ? lastRow.combinedPercentLoad : 0).toFixed(3)}% (Cond ${(lastRow ? lastRow.cumulativeIonLoad : 0).toFixed(3)} mol + Silica ${(lastRow ? lastRow.cumulativeSilicaLoad : 0).toFixed(3)} mol)`
+        );
+        lines.push(subDivider);
+
         lines.push(
           [
-            pad(String(c.step), 4, 'left'),
-            pad(c.label.slice(0, 13), 14, 'left'),
-            pad(c.cycleEnd.toFixed(2), 11),
-            pad(c.distance.toFixed(2), 10),
-            pad(`${c.silicaIn.toFixed(1)}/${c.silicaOut.toFixed(2)}`, 15),
-            pad(`${c.condIn.toFixed(2)}/${c.condOut.toFixed(3)}`, 15),
-            pad(c.totalCombinedIonLoad.toFixed(3), 14),
-            pad(`${c.combinedPercentLoad.toFixed(3)}%`, 11),
-            pad(`${c.silicaPercentLoad.toFixed(2)}%`, 10),
-            '  ' + getRowControlStatus(c, isTh),
+            pad('#', 3, 'left'),
+            pad(isTh ? 'รอบ' : 'Step', 10, 'left'),
+            pad('Cycle(m³)', 10),
+            pad('ΔV(m³)', 9),
+            pad('ΔSilica', 10),
+            pad('WA Silica', 10),
+            pad('ΔCond.', 10),
+            pad('WA Cond.', 10),
+            pad('Total WA', 10),
+            pad('Warn 90%(m³)', 13),
+            pad('Stop 95%(m³)', 13),
+            pad('%Load รวม', 10),
           ].join(' ')
         );
+        lines.push(subDivider);
+
+        b.rows.forEach((c) => {
+          lines.push(
+            [
+              pad(String(c.step), 3, 'left'),
+              pad(c.label.slice(0, 9), 10, 'left'),
+              pad(c.cycleEnd.toFixed(2), 10),
+              pad(c.distance.toFixed(2), 9),
+              pad(c.dSilica.toFixed(6), 10),
+              pad(fmtExportFixed(c.waSilica, 6), 10),
+              pad(c.dCond.toFixed(6), 10),
+              pad(fmtExportFixed(c.waCond, 6), 10),
+              pad(fmtExportFixed(c.totalWa, 6), 10),
+              pad(fmtExportFixed(c.predictedWarning90, 2), 13),
+              pad(fmtExportFixed(c.predictedStop95, 2), 13),
+              pad(`${c.combinedPercentLoad.toFixed(3)}%`, 10),
+            ].join(' ')
+          );
+        });
+
+        lines.push(divider);
+        lines.push('');
       });
 
-      lines.push(divider);
-      lines.push('');
-    });
+      const blob = new Blob(['\uFEFF' + lines.join('\r\n')], {
+        type: 'text/plain;charset=utf-8',
+      });
+      triggerDownload(blob, `${basePrefix}_${timestamp}.txt`);
+      return true;
+    }
 
-    const blob = new Blob(['\uFEFF' + lines.join('\r\n')], {
-      type: 'text/plain;charset=utf-8',
-    });
-    triggerDownload(blob, `${basePrefix}_${timestamp}.txt`);
-    return;
-  }
+    if (format === 'excel') {
+      const usedSheetNames = new Set<string>();
+      const worksheets: string[] = [];
 
-  if (format === 'excel') {
-    // Generate Microsoft Excel 2003 SpreadsheetML (.xls) with styled headers, summary & data rows
-    const worksheetsXml = batches
-      .map((b, idx) => {
-        const rawSheetName = `${idx + 1}_${b.batchName}`
-          .replace(/[\\/?*[\]:]/g, ' ')
-          .trim()
-          .slice(0, 28);
-        const sheetName = escapeXml(rawSheetName || `Batch_${idx + 1}`);
-        const totalCap = b.condCapacity + b.silicaCapacity;
-        const warnMol = Number((totalCap * 0.90).toFixed(2));
-        const stopMol = Number((totalCap * 0.95).toFixed(2));
+      const rowToneEvaluator = (c: EnrichedExportRow): 'normal' | 'warn' | 'stop' => {
+        const govPct = Math.max(c.combinedPercentLoad, c.silicaPercentLoad);
+        if (govPct >= 95 || c.condOut >= 0.1 || c.silicaOut >= 10) return 'stop';
+        if (govPct >= 90) return 'warn';
+        return 'normal';
+      };
+
+      const makeMasterColumns = (): ExcelColumnSpec<EnrichedExportRow>[] => [
+        { header: '#', width: 42, getValue: (r) => r.step, type: 'number', decimals: 0 },
+        { header: isTh ? 'รอบ' : 'Step', width: 95, getValue: (r) => r.label, type: 'string' },
+        { header: 'Cycle (m³)', width: 90, getValue: (r) => r.cycleEnd, type: 'number', decimals: 2 },
+        { header: 'ΔV (m³)', width: 85, getValue: (r) => r.distance, type: 'number', decimals: 2 },
+        { header: 'Silica MB Inlet/RO Outlet (ppb)', width: 155, getValue: (r) => r.silicaIn, type: 'number', decimals: 2 },
+        { header: 'Silica MB Outlet (ppb)', width: 130, getValue: (r) => r.silicaOut, type: 'number', decimals: 2 },
+        { header: 'Silica Inlet (mol/L)', width: 120, getValue: (r) => r.silicaConcInMolL, type: 'number', decimals: 7 },
+        { header: 'Silica Inlet (mol/m³)', width: 125, getValue: (r) => r.silicaConcInMolM3, type: 'number', decimals: 6 },
+        { header: 'Silica Outlet (mol/L)', width: 125, getValue: (r) => r.silicaConcOutMolL, type: 'number', decimals: 8 },
+        { header: 'Silica Outlet (mol/m³)', width: 125, getValue: (r) => r.silicaConcOutMolM3, type: 'number', decimals: 6 },
+        { header: 'ΔSilica (mol/m³)', width: 115, getValue: (r) => r.dSilica, type: 'number', decimals: 6 },
+        { header: 'Weighted Avg of Silica', width: 140, getValue: (r) => r.waSilica, type: 'number', decimals: 6 },
+        { header: isTh ? 'Ion ที่ใช้ไป Silica (mol)' : 'Silica Ions Consumed (mol)', width: 135, getValue: (r) => r.silicaIonsRemoved, type: 'number', decimals: 3 },
+        { header: 'Ion load silica (mol)', width: 125, getValue: (r) => r.cumulativeSilicaLoad, type: 'number', decimals: 3 },
+        { header: '%Ion load silica', width: 110, getValue: (r) => r.silicaPercentLoad, type: 'number', decimals: 3 },
+        { header: 'Cond. MB Inlet/RO Outlet (µS/cm)', width: 165, getValue: (r) => r.condIn, type: 'number', decimals: 3 },
+        { header: 'Cond MB Outlet (µS/cm)', width: 135, getValue: (r) => r.condOut, type: 'number', decimals: 3 },
+        { header: 'Cond. Inlet (mol/L)', width: 120, getValue: (r) => r.concInMolL, type: 'number', decimals: 8 },
+        { header: 'Cond. Inlet (mol/m³)', width: 125, getValue: (r) => r.concInMolM3, type: 'number', decimals: 6 },
+        { header: 'Cond. Outlet (mol/L)', width: 125, getValue: (r) => r.concOutMolL, type: 'number', decimals: 9 },
+        { header: 'Cond. Outlet (mol/m³)', width: 125, getValue: (r) => r.concOutMolM3, type: 'number', decimals: 6 },
+        { header: 'ΔCond. (mol/m³)', width: 115, getValue: (r) => r.dCond, type: 'number', decimals: 6 },
+        { header: 'Weighted Avg of Cond.', width: 140, getValue: (r) => r.waCond, type: 'number', decimals: 6 },
+        { header: isTh ? 'Ion ที่ใช้ไป Cond. (mol)' : 'Cond. Ions Consumed (mol)', width: 135, getValue: (r) => r.ionsRemoved, type: 'number', decimals: 3 },
+        { header: 'Ion load cond. (mol)', width: 125, getValue: (r) => r.cumulativeIonLoad, type: 'number', decimals: 3 },
+        { header: '%Ion load cond.', width: 110, getValue: (r) => r.condPercentLoad, type: 'number', decimals: 3 },
+        { header: 'Total Weighted Average', width: 145, getValue: (r) => r.totalWa, type: 'number', decimals: 6 },
+        { header: isTh ? 'จุดแจ้งเตือนระบบ (90%) (m³)' : 'System Warning (90%) (m³)', width: 150, getValue: (r) => r.predictedWarning90, type: 'number', decimals: 2 },
+        { header: isTh ? 'จุดหยุดระบบ (95%) (m³)' : 'System Stop (95%) (m³)', width: 145, getValue: (r) => r.predictedStop95, type: 'number', decimals: 2 },
+        { header: isTh ? 'Ion Load รวม (mol)' : 'Total Combined Load (mol)', width: 125, getValue: (r) => r.totalCombinedIonLoad, type: 'number', decimals: 3 },
+        { header: 'Percent Load on Resin (%)', width: 140, getValue: (r) => r.combinedPercentLoad, type: 'number', decimals: 3 },
+        { header: isTh ? 'สถานะการควบคุม' : 'Control Status', width: 175, getValue: (r) => getRowControlStatus(r, isTh), type: 'string' },
+      ];
+
+      if (enrichedBatches.length === 1) {
+        // Single-batch export: Create 5 separate worksheets matching the 5 UI Tabs + 1 Master All-Columns sheet
+        const b = enrichedBatches[0];
         const lastRow = b.rows[b.rows.length - 1];
-        const stop95 = b.predictedStop95Volume ?? (lastRow ? lastRow.predictedCycle : 0);
-        const warn90 =
-          b.predictedWarning90Volume ??
-          (stop95 > 0 && stopMol > 0 ? Number(((stop95 * warnMol) / stopMol).toFixed(3)) : 0);
+        const titleText = `${b.batchName} (Mixed Bed Train ${b.train}) — Estimate maximum conductivity capacity(mol) = ${b.condCapacity.toFixed(2)} | Estimate maximum silica capacity(mol) = ${b.silicaCapacity.toFixed(2)} | Total Capacity (100%) = ${b.totalCapacity.toFixed(2)} mol`;
+        const subtitleText = isTh
+          ? `ปริมาตรน้ำปัจจุบัน: ${(lastRow ? lastRow.cycleEnd : 0).toFixed(2)} m³ | จุดแจ้งเตือนระบบ (90% = ${b.warnMol.toFixed(2)} mol): ${fmtExportFixed(b.predictedWarning90Volume, 2)} m³ | จุดหยุดระบบ (95% = ${b.stopMol.toFixed(2)} mol): ${fmtExportFixed(b.predictedStop95Volume, 2)} m³ | Percent Load on Resin: ${(lastRow ? lastRow.combinedPercentLoad : 0).toFixed(3)}%`
+          : `Current Volume: ${(lastRow ? lastRow.cycleEnd : 0).toFixed(2)} m³ | 90% System Warning (${b.warnMol.toFixed(2)} mol): ${fmtExportFixed(b.predictedWarning90Volume, 2)} m³ | 95% System Stop (${b.stopMol.toFixed(2)} mol): ${fmtExportFixed(b.predictedStop95Volume, 2)} m³ | Percent Load on Resin: ${(lastRow ? lastRow.combinedPercentLoad : 0).toFixed(3)}%`;
 
-        const colHeaders = [
-          '#',
-          isTh ? 'รอบ (Step)' : 'Step',
-          'Cycle (m³)',
-          isTh ? 'ระยะห่าง ΔV (m³)' : 'Delta V (m³)',
-          'Silica MB Inlet (ppb)',
-          'Silica MB Outlet (ppb)',
-          'Conc. Silica In (mol/L)',
-          'Conc. Silica In (mol/m³)',
-          'Conc. Silica Out (mol/L)',
-          'Conc. Silica Out (mol/m³)',
-          isTh ? 'Ion Silica ที่หายไป (mol)' : 'Silica Removed (mol)',
-          isTh ? 'Ion Load Silica สะสม (mol)' : 'Cum. Silica Load (mol)',
-          '% Load Silica (%)',
-          'Cond. MB Inlet (µS/cm)',
-          'Cond MB Outlet (µS/cm)',
-          'Conc. Cond In (mol/m³)',
-          'Conc. Cond Out (mol/m³)',
-          isTh ? 'Ion Cond ที่หายไป (mol)' : 'Cond Removed (mol)',
-          isTh ? 'Ion Load Cond สะสม (mol)' : 'Cum. Cond Load (mol)',
-          isTh ? 'Ion Load รวม (mol)' : 'Total Combined Load (mol)',
-          '% Load on Resin (%)',
-          isTh ? 'จุดหยุดระบบ 95% (m³)' : 'Predicted 95% System Stop (m³)',
-          isTh ? 'สถานะการควบคุม' : 'Control Status',
-        ];
+        // Sheet 1: 1. บันทึกข้อมูล MB
+        worksheets.push(
+          buildWorksheetXml(
+            makeUniqueSheetName(isTh ? `1_บันทึกข้อมูล_MB_Train_${b.train}` : `1_Input_Log_Train_${b.train}`, usedSheetNames, 1),
+            titleText,
+            subtitleText,
+            [
+              { header: '#', width: 45, getValue: (r) => r.step, type: 'number', decimals: 0 },
+              { header: isTh ? 'รอบ' : 'Step', width: 105, getValue: (r) => r.label, type: 'string' },
+              { header: 'Cycle (m³)', width: 100, getValue: (r) => r.cycleEnd, type: 'number', decimals: 2 },
+              { header: 'Silica MB Inlet/RO Outlet (ppb)', width: 175, getValue: (r) => r.silicaIn, type: 'number', decimals: 2 },
+              { header: 'Silica MB Outlet (ppb)', width: 145, getValue: (r) => r.silicaOut, type: 'number', decimals: 2 },
+              { header: 'Cond. MB Inlet/RO Outlet (µS/cm)', width: 185, getValue: (r) => r.condIn, type: 'number', decimals: 3 },
+              { header: 'Cond MB Outlet (µS/cm)', width: 150, getValue: (r) => r.condOut, type: 'number', decimals: 3 },
+            ],
+            b.rows,
+            rowToneEvaluator
+          )
+        );
 
-        const dataRowsXml = b.rows
-          .map((c) => {
-            const govPct = Math.max(c.combinedPercentLoad, c.silicaPercentLoad);
-            const rowStyle =
-              govPct >= 95 ? 'sStopRow' : govPct >= 90 ? 'sWarnRow' : 'sNormalRow';
+        // Sheet 2: 2. การคำนวณ Silica
+        worksheets.push(
+          buildWorksheetXml(
+            makeUniqueSheetName(isTh ? '2_การคำนวณ_Silica' : '2_Silica_Calculation', usedSheetNames, 2),
+            titleText,
+            subtitleText,
+            [
+              { header: '#', width: 45, getValue: (r) => r.step, type: 'number', decimals: 0 },
+              { header: 'Cycle (m³)', width: 95, getValue: (r) => r.cycleEnd, type: 'number', decimals: 2 },
+              { header: 'ΔV (m³)', width: 90, getValue: (r) => r.distance, type: 'number', decimals: 2 },
+              { header: 'Silica Inlet (mol/L)', width: 130, getValue: (r) => r.silicaConcInMolL, type: 'number', decimals: 7 },
+              { header: 'Silica Inlet (mol/m³)', width: 135, getValue: (r) => r.silicaConcInMolM3, type: 'number', decimals: 6 },
+              { header: 'Silica Outlet (mol/L)', width: 135, getValue: (r) => r.silicaConcOutMolL, type: 'number', decimals: 8 },
+              { header: 'Silica Outlet (mol/m³)', width: 135, getValue: (r) => r.silicaConcOutMolM3, type: 'number', decimals: 6 },
+              { header: isTh ? 'Ion ที่ใช้ไป (mol)' : 'Ions Consumed (mol)', width: 125, getValue: (r) => r.silicaIonsRemoved, type: 'number', decimals: 3 },
+              { header: 'Ion load silica (mol)', width: 135, getValue: (r) => r.cumulativeSilicaLoad, type: 'number', decimals: 3 },
+              { header: '%Ion load silica', width: 115, getValue: (r) => r.silicaPercentLoad, type: 'number', decimals: 3 },
+            ],
+            b.rows,
+            rowToneEvaluator
+          )
+        );
 
-            const numCell = (val: number) =>
-              `<Cell ss:StyleID="${rowStyle}"><Data ss:Type="Number">${
-                Number.isFinite(val) ? val : 0
-              }</Data></Cell>`;
-            const strCell = (val: string) =>
-              `<Cell ss:StyleID="${rowStyle}"><Data ss:Type="String">${escapeXml(val)}</Data></Cell>`;
+        // Sheet 3: 3. การคำนวณ Conductivity
+        worksheets.push(
+          buildWorksheetXml(
+            makeUniqueSheetName(isTh ? '3_การคำนวณ_Conductivity' : '3_Conductivity_Calculation', usedSheetNames, 3),
+            titleText,
+            subtitleText,
+            [
+              { header: '#', width: 45, getValue: (r) => r.step, type: 'number', decimals: 0 },
+              { header: 'Cycle (m³)', width: 95, getValue: (r) => r.cycleEnd, type: 'number', decimals: 2 },
+              { header: 'ΔV (m³)', width: 90, getValue: (r) => r.distance, type: 'number', decimals: 2 },
+              { header: 'Cond. Inlet (mol/L)', width: 130, getValue: (r) => r.concInMolL, type: 'number', decimals: 8 },
+              { header: 'Cond. Inlet (mol/m³)', width: 135, getValue: (r) => r.concInMolM3, type: 'number', decimals: 6 },
+              { header: 'Cond. Outlet (mol/L)', width: 135, getValue: (r) => r.concOutMolL, type: 'number', decimals: 9 },
+              { header: 'Cond. Outlet (mol/m³)', width: 135, getValue: (r) => r.concOutMolM3, type: 'number', decimals: 6 },
+              { header: isTh ? 'Ion ที่ใช้ไป (mol)' : 'Ions Consumed (mol)', width: 125, getValue: (r) => r.ionsRemoved, type: 'number', decimals: 3 },
+              { header: 'Ion load cond. (mol)', width: 135, getValue: (r) => r.cumulativeIonLoad, type: 'number', decimals: 3 },
+              { header: '%Ion load cond.', width: 115, getValue: (r) => r.condPercentLoad, type: 'number', decimals: 3 },
+            ],
+            b.rows,
+            rowToneEvaluator
+          )
+        );
 
-            return `<Row ss:Height="20">
-              ${numCell(c.step)}
-              ${strCell(c.label)}
-              ${numCell(Number(c.cycleEnd.toFixed(3)))}
-              ${numCell(Number(c.distance.toFixed(3)))}
-              ${numCell(Number(c.silicaIn.toFixed(3)))}
-              ${numCell(Number(c.silicaOut.toFixed(3)))}
-              ${numCell(Number(c.silicaConcInMolL.toFixed(7)))}
-              ${numCell(Number(c.silicaConcInMolM3.toFixed(3)))}
-              ${numCell(Number(c.silicaConcOutMolL.toFixed(8)))}
-              ${numCell(Number(c.silicaConcOutMolM3.toFixed(3)))}
-              ${numCell(Number(c.silicaIonsRemoved.toFixed(3)))}
-              ${numCell(Number(c.cumulativeSilicaLoad.toFixed(3)))}
-              ${numCell(Number(c.silicaPercentLoad.toFixed(3)))}
-              ${numCell(Number(c.condIn.toFixed(3)))}
-              ${numCell(Number(c.condOut.toFixed(3)))}
-              ${numCell(Number(c.concInMolM3.toFixed(3)))}
-              ${numCell(Number(c.concOutMolM3.toFixed(3)))}
-              ${numCell(Number(c.ionsRemoved.toFixed(3)))}
-              ${numCell(Number(c.cumulativeIonLoad.toFixed(3)))}
-              ${numCell(Number(c.totalCombinedIonLoad.toFixed(3)))}
-              ${numCell(Number(c.combinedPercentLoad.toFixed(3)))}
-              ${numCell(Number(c.predictedCycle.toFixed(3)))}
-              ${strCell(getRowControlStatus(c, isTh))}
-            </Row>`;
-          })
-          .join('\n');
+        // Sheet 4: 4. Weighted Average
+        worksheets.push(
+          buildWorksheetXml(
+            makeUniqueSheetName('4_Weighted_Average', usedSheetNames, 4),
+            titleText,
+            subtitleText,
+            [
+              { header: '#', width: 45, getValue: (r) => r.step, type: 'number', decimals: 0 },
+              { header: 'Cycle (m³)', width: 95, getValue: (r) => r.cycleEnd, type: 'number', decimals: 2 },
+              { header: 'ΔV (m³)', width: 90, getValue: (r) => r.distance, type: 'number', decimals: 2 },
+              { header: 'Silica Inlet (mol/m³)', width: 135, getValue: (r) => r.silicaConcInMolM3, type: 'number', decimals: 6 },
+              { header: 'Silica Outlet (mol/m³)', width: 135, getValue: (r) => r.silicaConcOutMolM3, type: 'number', decimals: 6 },
+              { header: 'ΔSilica (mol/m³)', width: 120, getValue: (r) => r.dSilica, type: 'number', decimals: 6 },
+              { header: 'Weighted Avg of Silica', width: 145, getValue: (r) => r.waSilica, type: 'number', decimals: 6 },
+              { header: 'Cond. Inlet (mol/m³)', width: 135, getValue: (r) => r.concInMolM3, type: 'number', decimals: 6 },
+              { header: 'Cond. Outlet (mol/m³)', width: 135, getValue: (r) => r.concOutMolM3, type: 'number', decimals: 6 },
+              { header: 'ΔCond. (mol/m³)', width: 120, getValue: (r) => r.dCond, type: 'number', decimals: 6 },
+              { header: 'Weighted Avg of Cond.', width: 145, getValue: (r) => r.waCond, type: 'number', decimals: 6 },
+            ],
+            b.rows,
+            rowToneEvaluator
+          )
+        );
 
-        return `<Worksheet ss:Name="${sheetName}">
-          <Table>
-            <Column ss:Width="40"/>
-            <Column ss:Width="105"/>
-            <Column ss:Width="85"/>
-            <Column ss:Width="85"/>
-            <Column ss:Width="145"/>
-            <Column ss:Width="115"/>
-            <Column ss:Width="115"/>
-            <Column ss:Width="115"/>
-            <Column ss:Width="115"/>
-            <Column ss:Width="115"/>
-            <Column ss:Width="115"/>
-            <Column ss:Width="120"/>
-            <Column ss:Width="95"/>
-            <Column ss:Width="155"/>
-            <Column ss:Width="115"/>
-            <Column ss:Width="110"/>
-            <Column ss:Width="110"/>
-            <Column ss:Width="110"/>
-            <Column ss:Width="115"/>
-            <Column ss:Width="115"/>
-            <Column ss:Width="110"/>
-            <Column ss:Width="110"/>
-            <Column ss:Width="165"/>
-            <Row ss:Height="24">
-              <Cell ss:MergeAcross="22" ss:StyleID="sTitle">
-                <Data ss:Type="String">${escapeXml(
-                  `${b.batchName} (Train ${b.train || 'A'}) — Estimate maximum conductivity capacity(mol): ${b.condCapacity} | Estimate maximum silica capacity(mol): ${b.silicaCapacity} | Total: ${totalCap.toFixed(
-                    2
-                  )} mol`
-                )}</Data>
-              </Cell>
-            </Row>
-            <Row ss:Height="20">
-              <Cell ss:MergeAcross="22" ss:StyleID="sSubtitle">
-                <Data ss:Type="String">${escapeXml(
-                  isTh
-                    ? `ปริมาตรน้ำปัจจุบัน: ${(lastRow ? lastRow.cycleEnd : 0).toFixed(
-                        2
-                      )} m³ | จุดแจ้งเตือนระบบ 90%: ${warn90.toFixed(
-                        2
-                      )} m³ | จุดหยุดระบบ 95%: ${stop95.toFixed(
-                        2
-                      )} m³ | % Load ปัจจุบัน: ${(lastRow ? lastRow.combinedPercentLoad : 0).toFixed(3)}%`
-                    : `Current Water: ${(lastRow ? lastRow.cycleEnd : 0).toFixed(
-                        2
-                      )} m³ | 90% System Warning: ${warn90.toFixed(
-                        2
-                      )} m³ | 95% System Stop: ${stop95.toFixed(
-                        2
-                      )} m³ | Current Load: ${(lastRow ? lastRow.combinedPercentLoad : 0).toFixed(3)}%`
-                )}</Data>
-              </Cell>
-            </Row>
-            <Row ss:Height="24">
-              ${colHeaders
-                .map(
-                  (h) =>
-                    `<Cell ss:StyleID="sHeader"><Data ss:Type="String">${escapeXml(h)}</Data></Cell>`
-                )
-                .join('')}
-            </Row>
-            ${dataRowsXml}
-          </Table>
-        </Worksheet>`;
-      })
-      .join('\n');
+        // Sheet 5: 5. ทำนาย Cycle
+        worksheets.push(
+          buildWorksheetXml(
+            makeUniqueSheetName(isTh ? '5_ทำนาย_Cycle' : '5_Cycle_Prediction', usedSheetNames, 5),
+            titleText,
+            subtitleText,
+            [
+              { header: '#', width: 45, getValue: (r) => r.step, type: 'number', decimals: 0 },
+              { header: 'Cycle (m³)', width: 95, getValue: (r) => r.cycleEnd, type: 'number', decimals: 2 },
+              { header: 'Weighted Average of Silica', width: 165, getValue: (r) => r.waSilica, type: 'number', decimals: 6 },
+              { header: 'Weighted Average of Cond.', width: 165, getValue: (r) => r.waCond, type: 'number', decimals: 6 },
+              { header: 'Total Weighted Average', width: 155, getValue: (r) => r.totalWa, type: 'number', decimals: 6 },
+              { header: isTh ? 'จุดแจ้งเตือนระบบ (90%) (m³)' : 'System Warning (90%) (m³)', width: 165, getValue: (r) => r.predictedWarning90, type: 'number', decimals: 2 },
+              { header: isTh ? 'จุดหยุดระบบ (95%) (m³)' : 'System Stop (95%) (m³)', width: 155, getValue: (r) => r.predictedStop95, type: 'number', decimals: 2 },
+            ],
+            b.rows,
+            rowToneEvaluator
+          )
+        );
 
-    const excelXml = `<?xml version="1.0" encoding="UTF-8"?>
+        // Sheet 6: 6. สรุปรวมทั้งหมด (Master Table)
+        worksheets.push(
+          buildWorksheetXml(
+            makeUniqueSheetName(isTh ? '6_สรุปรวมทั้งหมด' : '6_Master_Summary', usedSheetNames, 6),
+            titleText,
+            subtitleText,
+            makeMasterColumns(),
+            b.rows,
+            rowToneEvaluator
+          )
+        );
+      } else {
+        // Multi-batch export: Create an Overview comparison sheet + 1 master sheet per batch
+        worksheets.push(
+          buildWorksheetXml(
+            makeUniqueSheetName(isTh ? '0_สรุปทุกชุดข้อมูล' : '0_All_Batches_Overview', usedSheetNames, 0),
+            isTh ? 'สรุปภาพรวมทุกชุดข้อมูลที่บันทึกไว้ (Mixed Bed Batch History Overview)' : 'Mixed Bed Saved Batches Summary Overview',
+            `${isTh ? 'จำนวนชุดข้อมูลทั้งหมด' : 'Total Batches'}: ${enrichedBatches.length}`,
+            [
+              { header: '#', width: 42, getValue: (b) => enrichedBatches.indexOf(b) + 1, type: 'number', decimals: 0 },
+              { header: isTh ? 'ชื่อชุดข้อมูล (Batch)' : 'Batch Name', width: 185, getValue: (b) => b.batchName, type: 'string' },
+              { header: 'Train', width: 55, getValue: (b) => b.train, type: 'string' },
+              { header: isTh ? 'จำนวนรอบ' : 'Steps', width: 75, getValue: (b) => b.rows.length, type: 'number', decimals: 0 },
+              { header: 'Cond. Cap (mol)', width: 105, getValue: (b) => b.condCapacity, type: 'number', decimals: 2 },
+              { header: 'Silica Cap (mol)', width: 105, getValue: (b) => b.silicaCapacity, type: 'number', decimals: 2 },
+              { header: 'Total Cap (mol)', width: 105, getValue: (b) => b.totalCapacity, type: 'number', decimals: 2 },
+              { header: 'Cycle ล่าสุด (m³)', width: 115, getValue: (b) => (b.rows.length ? b.rows[b.rows.length - 1].cycleEnd : 0), type: 'number', decimals: 2 },
+              { header: 'Weighted Avg Silica', width: 135, getValue: (b) => b.finalWaSilica, type: 'number', decimals: 6 },
+              { header: 'Weighted Avg Cond.', width: 135, getValue: (b) => b.finalWaCond, type: 'number', decimals: 6 },
+              { header: 'Total Weighted Avg', width: 135, getValue: (b) => b.finalTotalWa, type: 'number', decimals: 6 },
+              { header: isTh ? 'จุดแจ้งเตือน 90% (m³)' : '90% Warning (m³)', width: 135, getValue: (b) => b.predictedWarning90Volume, type: 'number', decimals: 2 },
+              { header: isTh ? 'จุดหยุดระบบ 95% (m³)' : '95% Stop (m³)', width: 135, getValue: (b) => b.predictedStop95Volume, type: 'number', decimals: 2 },
+              { header: 'Percent Load (%)', width: 115, getValue: (b) => (b.rows.length ? b.rows[b.rows.length - 1].combinedPercentLoad : 0), type: 'number', decimals: 3 },
+            ],
+            enrichedBatches,
+            (b) => {
+              const last = b.rows[b.rows.length - 1];
+              if (!last) return 'normal';
+              return rowToneEvaluator(last);
+            }
+          )
+        );
+
+        enrichedBatches.forEach((b, idx) => {
+          const lastRow = b.rows[b.rows.length - 1];
+          const sheetName = makeUniqueSheetName(`${idx + 1}_${b.batchName}`, usedSheetNames, idx + 1);
+          const titleText = `${b.batchName} (Mixed Bed Train ${b.train}) — Cond. Cap = ${b.condCapacity.toFixed(2)} mol | Silica Cap = ${b.silicaCapacity.toFixed(2)} mol | Total = ${b.totalCapacity.toFixed(2)} mol`;
+          const subtitleText = isTh
+            ? `ปริมาตรน้ำปัจจุบัน: ${(lastRow ? lastRow.cycleEnd : 0).toFixed(2)} m³ | จุดแจ้งเตือนระบบ (90%): ${fmtExportFixed(b.predictedWarning90Volume, 2)} m³ | จุดหยุดระบบ (95%): ${fmtExportFixed(b.predictedStop95Volume, 2)} m³ | Percent Load on Resin: ${(lastRow ? lastRow.combinedPercentLoad : 0).toFixed(3)}%`
+            : `Current Volume: ${(lastRow ? lastRow.cycleEnd : 0).toFixed(2)} m³ | 90% System Warning: ${fmtExportFixed(b.predictedWarning90Volume, 2)} m³ | 95% System Stop: ${fmtExportFixed(b.predictedStop95Volume, 2)} m³ | Percent Load on Resin: ${(lastRow ? lastRow.combinedPercentLoad : 0).toFixed(3)}%`;
+
+          worksheets.push(
+            buildWorksheetXml(
+              sheetName,
+              titleText,
+              subtitleText,
+              makeMasterColumns(),
+              b.rows,
+              rowToneEvaluator
+            )
+          );
+        });
+      }
+
+      const excelXml = `<?xml version="1.0" encoding="UTF-8"?>
 <?mso-application progid="Excel.Sheet"?>
 <Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
  xmlns:o="urn:schemas-microsoft-com:office:office"
@@ -548,36 +889,48 @@ export function exportBatchesToFile(
    </Borders>
   </Style>
  </Styles>
- ${worksheetsXml}
+ ${worksheets.join('\n ')}
 </Workbook>`;
 
-    const blob = new Blob(['\uFEFF' + excelXml], {
-      type: 'application/vnd.ms-excel;charset=utf-8',
-    });
-    triggerDownload(blob, `${basePrefix}_${timestamp}.xls`);
+      const blob = new Blob(['\uFEFF' + excelXml], {
+        type: 'application/vnd.ms-excel;charset=utf-8',
+      });
+      triggerDownload(blob, `${basePrefix}_${timestamp}.xls`);
+      return true;
+    }
+
+    return false;
+  } catch (err) {
+    console.error('Failed to export batch data:', err);
+    return false;
   }
 }
 
 /**
  * Helper to convert CyclePredictionRecord[] from HistoryView into BatchExportPayload[]
+ * Properly distinguishes Train A (73.75 / 5.81) and Train B (106.47 / 5.93) defaults.
  */
 export function convertRecordsToExportPayloads(
   records: CyclePredictionRecord[]
 ): BatchExportPayload[] {
   return records.map((r) => {
     const norm = normalizeCycleRecordToBatch(r);
-    const cCap = norm.condCapacity || DEFAULT_COND_CAPACITY;
-    const sCap = norm.silicaCapacity || DEFAULT_SILICA_CAPACITY;
+    const isTrainB = norm.train === 'B' || (!norm.train && norm.batchName.includes('B'));
+    const defaultCond = isTrainB ? DEFAULT_TRAIN_B_COND_CAPACITY : DEFAULT_COND_CAPACITY;
+    const defaultSilica = isTrainB ? DEFAULT_TRAIN_B_SILICA_CAPACITY : DEFAULT_SILICA_CAPACITY;
+    const cCap = norm.condCapacity && norm.condCapacity > 0 ? norm.condCapacity : defaultCond;
+    const sCap = norm.silicaCapacity && norm.silicaCapacity > 0 ? norm.silicaCapacity : defaultSilica;
     const totalCap = cCap + sCap;
-    const warnMol = Number((totalCap * 0.90).toFixed(2));
+    const warnMol = Number((totalCap * 0.9).toFixed(2));
     const stopMol = Number((totalCap * 0.95).toFixed(2));
     const stop95 = norm.predictedCycle;
     const warn90 = stop95 > 0 && stopMol > 0 ? Number(((stop95 * warnMol) / stopMol).toFixed(3)) : 0;
+
     return {
       batchName: norm.batchName,
-      train: norm.train || 'A',
-      condCapacity: norm.condCapacity || DEFAULT_COND_CAPACITY,
-      silicaCapacity: norm.silicaCapacity || DEFAULT_SILICA_CAPACITY,
+      train: isTrainB ? 'B' : 'A',
+      condCapacity: cCap,
+      silicaCapacity: sCap,
       rows: norm.rows,
       predictedWarning90Volume: warn90,
       predictedStop95Volume: stop95,
@@ -588,7 +941,7 @@ export function convertRecordsToExportPayloads(
 }
 
 interface ExportMenuProps {
-  onExport: (format: ExportFormat) => void;
+  onExport: (format: ExportFormat) => boolean | void;
   disabled?: boolean;
   isTh: boolean;
   label?: string;
@@ -604,6 +957,7 @@ export const ExportDataMenu: React.FC<ExportMenuProps> = ({
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [recentFormat, setRecentFormat] = useState<ExportFormat | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -620,12 +974,26 @@ export const ExportDataMenu: React.FC<ExportMenuProps> = ({
 
   const handleSelect = (fmt: ExportFormat) => {
     if (disabled) return;
-    onExport(fmt);
-    setRecentFormat(fmt);
-    setTimeout(() => {
-      setIsOpen(false);
-      setRecentFormat(null);
-    }, 500);
+    setExportError(null);
+    try {
+      const result = onExport(fmt);
+      if (result === false) {
+        setExportError(
+          isTh ? 'ไม่สามารถส่งออกไฟล์ได้ กรุณาตรวจสอบข้อมูลในตาราง' : 'Export failed. Please check table data.'
+        );
+        return;
+      }
+      setRecentFormat(fmt);
+      setTimeout(() => {
+        setIsOpen(false);
+        setRecentFormat(null);
+      }, 650);
+    } catch (err) {
+      console.error('Export trigger error:', err);
+      setExportError(
+        isTh ? 'เกิดข้อผิดพลาดขณะสร้างไฟล์ส่งออก' : 'An error occurred while generating the export file.'
+      );
+    }
   };
 
   const formatOptions: {
@@ -640,7 +1008,9 @@ export const ExportDataMenu: React.FC<ExportMenuProps> = ({
       id: 'excel',
       title: 'Microsoft Excel',
       ext: '.xls',
-      desc: isTh ? 'ตารางรายงานพร้อมสีสถานะและสรุปผล' : 'Formatted spreadsheet with status colors',
+      desc: isTh
+        ? 'แยกแผ่นงานครบทั้ง 5 แท็บ + ตารางสรุปรวมพร้อมสีสถานะ'
+        : '5 calculation sheets + master summary with status colors',
       badgeClass: 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/25',
       icon: <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />,
     },
@@ -648,15 +1018,19 @@ export const ExportDataMenu: React.FC<ExportMenuProps> = ({
       id: 'csv',
       title: 'CSV (UTF-8)',
       ext: '.csv',
-      desc: isTh ? 'ไฟล์ตารางมาตรฐานสำหรับวิเคราะห์ต่อ' : 'Standard comma-separated values',
+      desc: isTh
+        ? 'ตารางข้อมูลครบทุกคอลัมน์ (ทศนิยมละเอียด 6–9 ตำแหน่ง)'
+        : 'Full precision comma-separated values (all columns)',
       badgeClass: 'text-sky-600 dark:text-sky-400 bg-sky-500/10 border-sky-500/25',
       icon: <Table2 className="w-4 h-4 text-sky-500 shrink-0" />,
     },
     {
       id: 'txt',
-      title: isTh ? 'ข้อความธรรมดา (TXT)' : 'Plain Text Report',
+      title: isTh ? 'รายงานวิศวกรรม (TXT)' : 'Engineering Text Report',
       ext: '.txt',
-      desc: isTh ? 'สรุปค่าพารามิเตอร์และตารางอ่านง่าย' : 'Readable engineering summary & table',
+      desc: isTh
+        ? 'สรุปค่าความจุ, Weighted Average และตารางทำนาย Cycle'
+        : 'Readable engineering summary, Weighted Average & table',
       badgeClass: 'text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/25',
       icon: <FileText className="w-4 h-4 text-amber-500 shrink-0" />,
     },
@@ -664,11 +1038,51 @@ export const ExportDataMenu: React.FC<ExportMenuProps> = ({
       id: 'json',
       title: 'JSON Data',
       ext: '.json',
-      desc: isTh ? 'โครงสร้างข้อมูลสำหรับสำรองระบบ' : 'Structured backup data format',
+      desc: isTh ? 'โครงสร้างข้อมูลละเอียดครบทุกฟิลด์สำหรับสำรองระบบ' : 'Complete structured backup data format',
       badgeClass: 'text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border-indigo-500/25',
       icon: <FileCode2 className="w-4 h-4 text-indigo-500 shrink-0" />,
     },
   ];
+
+  const renderDropdownPanel = () => (
+    <div className="absolute right-0 top-full mt-1.5 w-[min(19rem,calc(100vw-2rem))] rounded-2xl bg-[var(--panel)] border border-[var(--line)] shadow-xl z-50 p-2 space-y-1">
+      <div className="px-2.5 py-1.5 text-xs font-bold text-[var(--ink)] border-b border-[var(--line)] flex items-center justify-between gap-2">
+        <span>{isTh ? 'ส่งออกข้อมูลการคำนวณ' : 'Export Calculation Data'}</span>
+        <span className="text-[11px] font-mono text-[var(--ink-soft)]">Excel · CSV · TXT · JSON</span>
+      </div>
+
+      {exportError && (
+        <div className="p-2 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400 text-[11px] flex items-center gap-1.5">
+          <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+          <span>{exportError}</span>
+        </div>
+      )}
+
+      {formatOptions.map((opt) => (
+        <button
+          key={opt.id}
+          type="button"
+          onClick={() => handleSelect(opt.id)}
+          className="w-full flex items-center justify-between gap-3 p-2.5 rounded-xl hover:bg-[var(--bg)] text-left transition-colors cursor-pointer"
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] shrink-0">
+              {opt.icon}
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-[var(--ink)] truncate">{opt.title}</div>
+              <div className="text-[11px] text-[var(--ink-soft)] leading-snug line-clamp-2">{opt.desc}</div>
+            </div>
+          </div>
+          <span
+            className={`px-2 py-0.5 rounded-md text-xs font-mono font-bold border shrink-0 ${opt.badgeClass}`}
+          >
+            {recentFormat === opt.id ? <Check className="w-3.5 h-3.5 inline" /> : opt.ext}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
 
   if (variant === 'compact') {
     return (
@@ -685,35 +1099,7 @@ export const ExportDataMenu: React.FC<ExportMenuProps> = ({
           <ChevronDown className="w-3 h-3 text-[var(--ink-soft)]" />
         </button>
 
-        {isOpen && (
-          <div className="absolute right-0 mt-1.5 w-72 rounded-2xl bg-[var(--panel)] border border-[var(--line)] shadow-xl z-50 p-1.5 space-y-1">
-            <div className="px-2.5 py-1.5 text-xs font-bold text-[var(--ink)] border-b border-[var(--line)] flex items-center justify-between">
-              <span>{isTh ? 'เลือกรูปแบบไฟล์ที่ต้องการ' : 'Select Export Format'}</span>
-              <span className="font-mono text-[11px] text-[var(--ink-soft)]">4 formats</span>
-            </div>
-            {formatOptions.map((opt) => (
-              <button
-                key={opt.id}
-                type="button"
-                onClick={() => handleSelect(opt.id)}
-                className="w-full flex items-center justify-between gap-2.5 p-2 rounded-xl hover:bg-[var(--bg)] text-left transition-colors cursor-pointer"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  {opt.icon}
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-[var(--ink)] truncate">{opt.title}</div>
-                    <div className="text-xs text-[var(--ink-soft)] truncate">{opt.desc}</div>
-                  </div>
-                </div>
-                <span
-                  className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-bold border shrink-0 ${opt.badgeClass}`}
-                >
-                  {recentFormat === opt.id ? <Check className="w-3 h-3 inline" /> : opt.ext}
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
+        {isOpen && renderDropdownPanel()}
       </div>
     );
   }
@@ -743,52 +1129,22 @@ export const ExportDataMenu: React.FC<ExportMenuProps> = ({
               { id: 'json' as const, label: 'JSON', color: 'hover:text-indigo-500' },
             ] as const
           ).map((btn) => (
-              <button
-                key={btn.id}
-                type="button"
-                disabled={disabled}
-                onClick={() => handleSelect(btn.id)}
-                className={`px-2 py-1 rounded-lg text-xs font-mono font-bold text-[var(--ink-soft)] ${btn.color} hover:bg-[var(--panel)] transition-colors cursor-pointer disabled:opacity-40`}
-                title={`${isTh ? 'ส่งออกเป็น' : 'Export as'} ${btn.label}`}
-              >
-                {recentFormat === btn.id ? <Check className="w-3 h-3 inline text-emerald-500" /> : btn.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-      {/* Dropdown Panel with Full Details */}
-      {isOpen && (
-        <div className="absolute right-0 top-full mt-1.5 w-72 rounded-2xl bg-[var(--panel)] border border-[var(--line)] shadow-xl z-50 p-2 space-y-1">
-          <div className="px-2.5 py-1.5 text-xs font-bold text-[var(--ink)] border-b border-[var(--line)] flex items-center justify-between">
-            <span>{isTh ? 'ส่งออกข้อมูลการคำนวณ' : 'Export Calculation Data'}</span>
-            <span className="text-[11px] font-mono text-[var(--ink-soft)]">Excel · CSV · TXT · JSON</span>
-          </div>
-          {formatOptions.map((opt) => (
             <button
-              key={opt.id}
+              key={btn.id}
               type="button"
-              onClick={() => handleSelect(opt.id)}
-              className="w-full flex items-center justify-between gap-3 p-2.5 rounded-xl hover:bg-[var(--bg)] text-left transition-colors cursor-pointer"
+              disabled={disabled}
+              onClick={() => handleSelect(btn.id)}
+              className={`px-2 py-1 rounded-lg text-xs font-mono font-bold text-[var(--ink-soft)] ${btn.color} hover:bg-[var(--panel)] transition-colors cursor-pointer disabled:opacity-40`}
+              title={`${isTh ? 'ส่งออกเป็น' : 'Export as'} ${btn.label}`}
             >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div className="p-2 rounded-lg bg-[var(--bg)] border border-[var(--line)] shrink-0">
-                  {opt.icon}
-                </div>
-                <div className="min-w-0">
-                  <div className="text-xs font-bold text-[var(--ink)] truncate">{opt.title}</div>
-                  <div className="text-xs text-[var(--ink-soft)] truncate">{opt.desc}</div>
-                </div>
-              </div>
-              <span
-                className={`px-2 py-0.5 rounded-md text-xs font-mono font-bold border shrink-0 ${opt.badgeClass}`}
-              >
-                {recentFormat === opt.id ? <Check className="w-3.5 h-3.5 inline" /> : opt.ext}
-              </span>
+              {recentFormat === btn.id ? <Check className="w-3 h-3 inline text-emerald-500" /> : btn.label}
             </button>
           ))}
         </div>
-      )}
+      </div>
+
+      {/* Dropdown Panel with Full Details */}
+      {isOpen && renderDropdownPanel()}
     </div>
   );
 };

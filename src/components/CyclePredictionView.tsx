@@ -1746,11 +1746,11 @@ const requestClearWorkspace = () => {
   });
 };
 
-const handleExportActiveBatch = (format: ExportFormat) => {
+const handleExportActiveBatch = (format: ExportFormat): boolean => {
   const rowsToExport = processedCycles;
-  if (!rowsToExport.length) return;
+  if (!rowsToExport.length) return false;
 
-  exportBatchesToFile(
+  const ok = exportBatchesToFile(
     [
       {
         batchName: batchName || (isTh ? 'ชุดข้อมูลปัจจุบัน' : 'Active Batch'),
@@ -1766,6 +1766,16 @@ const handleExportActiveBatch = (format: ExportFormat) => {
     format,
     isTh
   );
+
+  if (ok) {
+    setSaveSuccessMessage(
+      isTh
+        ? `ส่งออกไฟล์ (${format.toUpperCase()}) ของ "${batchName || 'ชุดข้อมูลปัจจุบัน'}" (${rowsToExport.length} รอบ) เรียบร้อยแล้ว`
+        : `Exported ${format.toUpperCase()} file for "${batchName || 'Active Batch'}" (${rowsToExport.length} steps)`
+    );
+    setTimeout(() => setSaveSuccessMessage(null), 3500);
+  }
+  return ok;
 };
 
 // Line Chart Geometry: Y-Axis = % Load on Resin (%), X-Axis = Cycle (m³)

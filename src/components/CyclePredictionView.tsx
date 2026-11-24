@@ -1450,74 +1450,54 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     setErrorMessage(null);
   };
 
-  const handleLoadBenchmark = (whichPreset: 'A1' | 'A2' | 'B') => {
-    const handleLoadBenchmark = (whichPreset: 'A1' | 'A2' | 'A3' | 'B1' | 'B2' | 'B3') => {
-      const presetRows =
-        whichPreset === 'A1'
-          ? PLANT_TRAIN_A_BENCHMARK
-          : whichPreset === 'A2'
-            ? PLANT_TRAIN_A_SET2_BENCHMARK
-            : PLANT_TRAIN_B_BENCHMARK;
-      const targetTrain: TrainId = whichPreset === 'B' ? 'B' : 'A';
-        : whichPreset === 'A3'
-  ? PLANT_TRAIN_A_SET3_BENCHMARK
-  : whichPreset === 'B1'
-    ? PLANT_TRAIN_B_BENCHMARK
-    : whichPreset === 'B2'
-      ? PLANT_TRAIN_B_SET2_BENCHMARK
-      : PLANT_TRAIN_B_SET3_BENCHMARK;
-const targetTrain: TrainId = whichPreset.startsWith('B') ? 'B' : 'A';
-const nextCondCap =
-  whichPreset === 'B'
-targetTrain === 'B'
-  ? DEFAULT_TRAIN_B_COND_CAPACITY.toString()
-  : DEFAULT_COND_CAPACITY.toString();
-const nextSilicaCap =
-  whichPreset === 'B'
-targetTrain === 'B'
-  ? DEFAULT_TRAIN_B_SILICA_CAPACITY.toString()
-  : DEFAULT_SILICA_CAPACITY.toString();
+  const handleLoadBenchmark = (whichPreset: 'A1' | 'A2' | 'A3' | 'B1' | 'B2' | 'B3') => {
+    const presetRowsMap: Record<typeof whichPreset, CycleRowInput[]> = {
+      A1: PLANT_TRAIN_A_BENCHMARK,
+      A2: PLANT_TRAIN_A_SET2_BENCHMARK,
+      A3: PLANT_TRAIN_A_SET3_BENCHMARK,
+      B1: PLANT_TRAIN_B_BENCHMARK,
+      B2: PLANT_TRAIN_B_SET2_BENCHMARK,
+      B3: PLANT_TRAIN_B_SET3_BENCHMARK,
+    };
+    const presetRows = presetRowsMap[whichPreset];
+    const targetTrain: TrainId = whichPreset.startsWith('B') ? 'B' : 'A';
+    const nextCondCap =
+      targetTrain === 'B'
+        ? DEFAULT_TRAIN_B_COND_CAPACITY.toString()
+        : DEFAULT_COND_CAPACITY.toString();
+    const nextSilicaCap =
+      targetTrain === 'B'
+        ? DEFAULT_TRAIN_B_SILICA_CAPACITY.toString()
+        : DEFAULT_SILICA_CAPACITY.toString();
 
-const presetNameMap: Record<typeof whichPreset, { th: string; en: string }> = {
-  A1: { th: 'ชุดที่ 1 - Train A (15 รอบ · 1,728.29 m³)', en: 'Set 1 - Train A (15 cycles · 1,728.29 m³)' },
-  A2: { th: 'ชุดที่ 2 - Train A (40 รอบ · 1,902.84 m³)', en: 'Set 2 - Train A (40 cycles · 1,902.84 m³)' },
-  A3: { th: 'ชุดที่ 3 - Train A (24 รอบ · 1,771.10 m³)', en: 'Set 3 - Train A (24 cycles · 1,771.10 m³)' },
-  B1: { th: 'ชุดที่ 1 - Train B (25 รอบ · 2,014.38 m³)', en: 'Set 1 - Train B (25 cycles · 2,014.38 m³)' },
-  B2: { th: 'ชุดที่ 2 - Train B (38 รอบ · 2,104.16 m³)', en: 'Set 2 - Train B (38 cycles · 2,104.16 m³)' },
-  B3: { th: 'ชุดที่ 3 - Train B (6 รอบ · 1,938.47 m³)', en: 'Set 3 - Train B (6 cycles · 1,938.47 m³)' },
-};
+    const presetNameMap: Record<typeof whichPreset, { th: string; en: string }> = {
+      A1: { th: 'ชุดที่ 1 - Train A (15 รอบ · 1,728.29 m³)', en: 'Set 1 - Train A (15 cycles · 1,728.29 m³)' },
+      A2: { th: 'ชุดที่ 2 - Train A (40 รอบ · 1,902.84 m³)', en: 'Set 2 - Train A (40 cycles · 1,902.84 m³)' },
+      A3: { th: 'ชุดที่ 3 - Train A (24 รอบ · 1,771.10 m³)', en: 'Set 3 - Train A (24 cycles · 1,771.10 m³)' },
+      B1: { th: 'ชุดที่ 1 - Train B (25 รอบ · 2,014.38 m³)', en: 'Set 1 - Train B (25 cycles · 2,014.38 m³)' },
+      B2: { th: 'ชุดที่ 2 - Train B (38 รอบ · 2,104.16 m³)', en: 'Set 2 - Train B (38 cycles · 2,104.16 m³)' },
+      B3: { th: 'ชุดที่ 3 - Train B (6 รอบ · 1,938.47 m³)', en: 'Set 3 - Train B (6 cycles · 1,938.47 m³)' },
+    };
 
-setActiveTrain(targetTrain);
-updateTrainWorkspace(targetTrain, {
-  editingBatchId: null,
-  editingBatchCreatedAt: null,
-  condCapacity: nextCondCap,
-  silicaCapacity: nextSilicaCap,
-  batchName:
-    whichPreset === 'A1'
-      ? isTh
-        ? 'ชุดที่ 1 - Train A (15 รอบ)'
-        : 'Set 1 - Train A (15 cycles)'
-      : whichPreset === 'A2'
-        ? isTh
-          ? 'ชุดที่ 2 - Train A (40 รอบ · 1,861.28 m³)'
-          : 'Set 2 - Train A (40 cycles · 1,861.28 m³)'
-        : isTh
-          ? 'ชุดที่ 1 - Train B (15 รอบ)'
-          : 'Set 1 - Train B (15 cycles)',
-  batchName: isTh ? presetNameMap[whichPreset].th : presetNameMap[whichPreset].en,
-  rows: presetRows.map((r, i) => ({
-    rowId: generateValidId(`bm_${whichPreset}_${i + 1}`),
-    label: r.label,
-    cycleEnd: r.cycleEnd,
-    condIn: r.condIn,
-    condOut: r.condOut,
-    silicaIn: r.silicaIn,
-    silicaOut: r.silicaOut,
-  })),
-});
-setInspectedStepIndex(0);
-setErrorMessage(null);
+    setActiveTrain(targetTrain);
+    updateTrainWorkspace(targetTrain, {
+      editingBatchId: null,
+      editingBatchCreatedAt: null,
+      condCapacity: nextCondCap,
+      silicaCapacity: nextSilicaCap,
+      batchName: isTh ? presetNameMap[whichPreset].th : presetNameMap[whichPreset].en,
+      rows: presetRows.map((r, i) => ({
+        rowId: generateValidId(`bm_${whichPreset}_${i + 1}`),
+        label: r.label,
+        cycleEnd: r.cycleEnd,
+        condIn: r.condIn,
+        condOut: r.condOut,
+        silicaIn: r.silicaIn,
+        silicaOut: r.silicaOut,
+      })),
+    });
+    setInspectedStepIndex(0);
+    setErrorMessage(null);
   };
 
 const handleConsolidateLegacyRecords = async () => {
@@ -2075,72 +2055,60 @@ return (
                 : `Load Benchmark (Train ${train})`}
             </label>
             {train === 'A' ? (
-              <div className="grid grid-cols-2 gap-1.5">
-                <div className="grid grid-cols-3 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => handleLoadBenchmark('A1')}
-                    className="py-2 px-2.5 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-[var(--ink)] cursor-pointer whitespace-nowrap truncate"
-                    title="Train A ชุดที่ 1 (15 รอบ)"
-                    className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-[var(--ink)] cursor-pointer whitespace-nowrap truncate"
-                    title="Train A ชุดที่ 1 (15 รอบ · 1,728.29 m³)"
-                  >
-                    {isTh ? 'ชุดอ้างอิง Train A1 (15 รอบ)' : 'Train A1 (15 steps)'}
-                    {isTh ? 'ชุดที่ 1 A1 (15 รอบ)' : 'Set A1 (15 steps)'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleLoadBenchmark('A2')}
-                    className="py-2 px-2.5 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-emerald-600 dark:text-emerald-400 cursor-pointer whitespace-nowrap truncate"
-                    title="Train A ชุดที่ 2 (40 รอบ · 1,861.28 m³)"
-                    className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-emerald-600 dark:text-emerald-400 cursor-pointer whitespace-nowrap truncate"
-                    title="Train A ชุดที่ 2 (40 รอบ · 1,902.84 m³)"
-                  >
-                    {isTh ? 'ชุดอ้างอิง Train A2 (40 รอบ)' : 'Train A2 (40 steps)'}
-                    {isTh ? 'ชุดที่ 2 A2 (40 รอบ)' : 'Set A2 (40 steps)'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleLoadBenchmark('A3')}
-                    className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-teal-600 dark:text-teal-400 cursor-pointer whitespace-nowrap truncate"
-                    title="Train A ชุดที่ 3 (24 รอบ · 1,771.10 m³)"
-                  >
-                    {isTh ? 'ชุดที่ 3 A3 (24 รอบ)' : 'Set A3 (24 steps)'}
-                  </button>
-                </div>
-                ) : (
-                <div className="grid grid-cols-1">
-                  <div className="grid grid-cols-3 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => handleLoadBenchmark('B')}
-                      className="py-2 px-3 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-sky-600 dark:text-sky-400 cursor-pointer whitespace-nowrap truncate"
-                      title="Train B (15 รอบ)"
-                      onClick={() => handleLoadBenchmark('B1')}
-                      className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-sky-600 dark:text-sky-400 cursor-pointer whitespace-nowrap truncate"
-                      title="Train B ชุดที่ 1 (25 รอบ · 2,014.38 m³)"
-                    >
-                      {isTh ? 'โหลดชุดอ้างอิง Train B (15 รอบ)' : 'Load Train B Benchmark (15 steps)'}
-                      {isTh ? 'ชุดที่ 1 B1 (25 รอบ)' : 'Set B1 (25 steps)'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleLoadBenchmark('B2')}
-                      className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-indigo-600 dark:text-indigo-400 cursor-pointer whitespace-nowrap truncate"
-                      title="Train B ชุดที่ 2 (38 รอบ · 2,104.16 m³)"
-                    >
-                      {isTh ? 'ชุดที่ 2 B2 (38 รอบ)' : 'Set B2 (38 steps)'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleLoadBenchmark('B3')}
-                      className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-cyan-600 dark:text-cyan-400 cursor-pointer whitespace-nowrap truncate"
-                      title="Train B ชุดที่ 3 (6 รอบ · 1,938.47 m³)"
-                    >
-                      {isTh ? 'ชุดที่ 3 B3 (6 รอบ)' : 'Set B3 (6 steps)'}
-                    </button>
-                  </div>
-              )}
+              <div className="grid grid-cols-3 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleLoadBenchmark('A1')}
+                  className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-[var(--ink)] cursor-pointer whitespace-nowrap truncate"
+                  title="Train A ชุดที่ 1 (15 รอบ · 1,728.29 m³)"
+                >
+                  {isTh ? 'ชุดที่ 1 A1 (15 รอบ)' : 'Set A1 (15 steps)'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleLoadBenchmark('A2')}
+                  className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-emerald-600 dark:text-emerald-400 cursor-pointer whitespace-nowrap truncate"
+                  title="Train A ชุดที่ 2 (40 รอบ · 1,902.84 m³)"
+                >
+                  {isTh ? 'ชุดที่ 2 A2 (40 รอบ)' : 'Set A2 (40 steps)'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleLoadBenchmark('A3')}
+                  className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-teal-600 dark:text-teal-400 cursor-pointer whitespace-nowrap truncate"
+                  title="Train A ชุดที่ 3 (24 รอบ · 1,771.10 m³)"
+                >
+                  {isTh ? 'ชุดที่ 3 A3 (24 รอบ)' : 'Set A3 (24 steps)'}
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => handleLoadBenchmark('B1')}
+                  className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-sky-600 dark:text-sky-400 cursor-pointer whitespace-nowrap truncate"
+                  title="Train B ชุดที่ 1 (25 รอบ · 2,014.38 m³)"
+                >
+                  {isTh ? 'ชุดที่ 1 B1 (25 รอบ)' : 'Set B1 (25 steps)'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleLoadBenchmark('B2')}
+                  className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-indigo-600 dark:text-indigo-400 cursor-pointer whitespace-nowrap truncate"
+                  title="Train B ชุดที่ 2 (38 รอบ · 2,104.16 m³)"
+                >
+                  {isTh ? 'ชุดที่ 2 B2 (38 รอบ)' : 'Set B2 (38 steps)'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleLoadBenchmark('B3')}
+                  className="py-2 px-2 rounded-xl bg-[var(--bg)] hover:bg-[var(--sidebar-hover)] border border-[var(--line)] text-xs font-semibold text-cyan-600 dark:text-cyan-400 cursor-pointer whitespace-nowrap truncate"
+                  title="Train B ชุดที่ 3 (6 รอบ · 1,938.47 m³)"
+                >
+                  {isTh ? 'ชุดที่ 3 B3 (6 รอบ)' : 'Set B3 (6 steps)'}
+                </button>
+              </div>
+            )}
                 </div>
 
                 {/* Estimate maximum conductivity capacity(mol) */}

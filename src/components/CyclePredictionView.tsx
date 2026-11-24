@@ -2366,8 +2366,8 @@ return (
                         </div>
                         <div className="text-[11px] text-[var(--ink-soft)]">
                           {isTh
-                            ? 'แสดงสูตรการคำนวณ วิธีแทนค่ารายรอบ และคำอธิบายสั้น ๆ · คลิกที่ตัวเลขในตารางด้านล่างเพื่อกระโดดมายังสูตรที่ต้องการได้ทันที'
-                            : 'Shows calculation formulas, live step substitution, and short explanations · Click any calculated value in the table below to jump here.'}
+                            ? 'แสดงสูตรการคำนวณ วิธีแทนค่ารายรอบ และคำอธิบายสั้น ๆ · คลิกที่ตัวเลขในตารางด้านล่างเพื่อเอาออกมายังสูตรที่ต้องการได้ทันที'
+                            : 'Shows calculation formulas, live step substitution, and short explanations · Click any calculated value in the table below to bring out the desired formula immediately.'}
                         </div>
                       </div>
 
@@ -2427,14 +2427,16 @@ return (
                         <div className="border-b border-[var(--line)] pb-2 space-y-1 font-sans">
                           <div className="flex items-center justify-between gap-2">
                             <h4 className="text-xs sm:text-sm font-bold text-sky-600 dark:text-sky-400">
-                              ส่วนที่ 1: Conductivity (Cond.)
+                              {isTh ? 'ส่วนที่ 1: Conductivity (Cond.)' : 'Section 1: Conductivity (Cond.)'}
                             </h4>
                             <span className="text-xs font-mono font-semibold text-[var(--ink-soft)]">
                               Estimate maximum conductivity capacity(mol) = {liveFormulaCalc.activeCondCap.toFixed(2)}
                             </span>
                           </div>
                           <div className="text-xs text-[var(--ink-soft)]">
-                            Input ที่ผู้ใช้กรอก: 1. Cycle (m³) · 2. Cond. MB Inlet (µS/cm) · 3. Cond. MB Outlet (µS/cm)
+                            {isTh
+                              ? 'Input ที่ผู้ใช้กรอก: 1. Cycle (m³) · 2. Cond. MB Inlet (µS/cm) · 3. Cond. MB Outlet (µS/cm)'
+                              : 'User Inputs: 1. Cycle (m³) · 2. Cond. MB Inlet (µS/cm) · 3. Cond. MB Outlet (µS/cm)'}
                           </div>
                         </div>
 
@@ -2442,7 +2444,9 @@ return (
                           {/* Cond Step 1: ΔV */}
                           <div id="formula-card-cond_dv" className={getFormulaCardClass('cond_dv')}>
                             <div className="font-sans font-bold text-[var(--ink)]">
-                              1. ระยะห่าง Cycle (ΔV, m³) = Cycle รวมปัจจุบัน − Cycle รอบก่อนหน้า
+                              {isTh
+                                ? '1. ระยะห่าง Cycle (ΔV, m³) = Cycle รวมปัจจุบัน − Cycle รอบก่อนหน้า'
+                                : '1. Cycle Interval (ΔV, m³) = Current Cumulative Cycle − Previous Cycle'}
                             </div>
                             <div className="text-[var(--ink-soft)]">
                               {liveFormulaCalc.currentCycleVol.toFixed(2)} − {liveFormulaCalc.prevCycleVol.toFixed(2)} ={' '}
@@ -2450,8 +2454,8 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'cond_dv',
-                              'คำนวณปริมาตรน้ำที่ผลิตเพิ่มขึ้นในรอบนี้ (ΔV) โดยนำปริมาตรสะสมของรอบปัจจุบันลบด้วยปริมาตรสะสมของรอบก่อนหน้า',
-                              'Incremental water volume produced in this step (ΔV = current cumulative volume minus previous volume).'
+                              'คำนวณปริมาตรน้ำที่ผลิตได้ในรอบนี้ (ΔV) โดยนำปริมาตรสะสมของรอบปัจจุบันลบด้วยปริมาตรสะสมของรอบก่อนหน้า',
+                              'Calculates the water volume produced in this step (ΔV) by subtracting the previous cumulative volume from the current cumulative volume.'
                             )}
                           </div>
 
@@ -2468,26 +2472,26 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'cond_in_mol_l',
-                              'แปลงค่าการนำไฟฟ้าขาเข้า (µS/cm) เป็นความเข้มข้นโมลาร์ต่อลิตร (mol/L) โดยใช้ค่า Limiting Molar Conductivity ของ NaCl = 126.45',
-                              'Converts inlet conductivity (µS/cm) to molar concentration (mol/L) using NaCl limiting molar conductivity 126.45.'
+                              'แปลงค่าการนำไฟฟ้าขาเข้า (µS/cm) เป็นความเข้มข้นโมลต่อลิตร (mol/L) โดยใช้ค่า Limiting molar conductivity ของ NaCl = 126.45',
+                              'Converts inlet conductivity (µS/cm) to molar concentration (mol/L) using the limiting molar conductivity of NaCl = 126.45.'
                             )}
                           </div>
 
                           {/* Cond Step 3: Cond Inlet (mol/m³) */}
                           <div id="formula-card-cond_in_mol_m3" className={getFormulaCardClass('cond_in_mol_m3')}>
                             <div className="font-sans font-bold text-[var(--ink)]">
-                              3. Cond. Inlet (mol/m³) = [Cond. MB Inlet (µS/cm) ÷ (1000 × 126.45)] × 1000
+                              3. Cond. Inlet (mol/m³) = Cond. Inlet (mol/L) × 1000
                             </div>
                             <div className="text-[var(--ink-soft)]">
-                              [{liveFormulaCalc.condInVal.toFixed(3)} ÷ (1000 × 126.45)] × 1000 ={' '}
+                              {liveFormulaCalc.condConcInMolL.toFixed(8)} × 1000 ={' '}
                               <strong className="text-sky-600 dark:text-sky-400">
                                 {liveFormulaCalc.condConcInMolM3.toFixed(6)} mol/m³
                               </strong>
                             </div>
                             {renderHighlightedFormulaBadge(
                               'cond_in_mol_m3',
-                              'แปลงความเข้มข้นไอออนขาเข้าจากหน่วย mol/L เป็นต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
-                              'Converts inlet molar concentration from mol/L to mol/m³ by multiplying by 1,000.'
+                              'แปลงความเข้มข้นไอออนขาเข้า (mol/L) เป็นโมลต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
+                              'Converts inlet ion concentration (mol/L) to moles per cubic meter (mol/m³) by multiplying by 1,000.'
                             )}
                           </div>
 
@@ -2504,26 +2508,26 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'cond_out_mol_l',
-                              'แปลงค่าการนำไฟฟ้าขาออก (µS/cm) เป็นความเข้มข้นโมลาร์ต่อลิตร (mol/L)',
-                              'Converts outlet conductivity (µS/cm) to molar concentration (mol/L).'
+                              'แปลงค่าการนำไฟฟ้าขาออก (µS/cm) เป็นความเข้มข้นโมลต่อลิตร (mol/L) โดยใช้ค่า Limiting molar conductivity ของ NaCl = 126.45',
+                              'Converts outlet conductivity (µS/cm) to molar concentration (mol/L) using the limiting molar conductivity of NaCl = 126.45.'
                             )}
                           </div>
 
                           {/* Cond Step 5: Cond Outlet (mol/m³) */}
                           <div id="formula-card-cond_out_mol_m3" className={getFormulaCardClass('cond_out_mol_m3')}>
                             <div className="font-sans font-bold text-[var(--ink)]">
-                              5. Cond. Outlet (mol/m³) = [Cond. MB Outlet (µS/cm) ÷ (1000 × 126.45)] × 1000
+                              5. Cond. Outlet (mol/m³) = Cond. Outlet (mol/L) × 1000
                             </div>
                             <div className="text-[var(--ink-soft)]">
-                              [{liveFormulaCalc.condOutVal.toFixed(3)} ÷ (1000 × 126.45)] × 1000 ={' '}
+                              {liveFormulaCalc.condConcOutMolL.toFixed(9)} × 1000 ={' '}
                               <strong className="text-sky-600 dark:text-sky-400">
                                 {liveFormulaCalc.condConcOutMolM3.toFixed(6)} mol/m³
                               </strong>
                             </div>
                             {renderHighlightedFormulaBadge(
                               'cond_out_mol_m3',
-                              'แปลงความเข้มข้นไอออนขาออกจากหน่วย mol/L เป็นต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
-                              'Converts outlet molar concentration from mol/L to mol/m³ by multiplying by 1,000.'
+                              'แปลงความเข้มข้นไอออนขาออก (mol/L) เป็นโมลต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
+                              'Converts outlet ion concentration (mol/L) to moles per cubic meter (mol/m³) by multiplying by 1,000.'
                             )}
                           </div>
 
@@ -2540,8 +2544,8 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'cond_delta',
-                              'ผลต่างความเข้มข้นไอออนจากค่าการนำไฟฟ้าที่เรซินจับไว้ได้ต่อน้ำ 1 ลูกบาศก์เมตรในรอบนั้น',
-                              'Net conductivity ion concentration removed per m³ of water in this step.'
+                              'ผลต่างความเข้มข้นไอออนจากค่าการนำไฟฟ้า ที่ถูกเรซินใช้ไปต่อน้ำ 1 ลูกบาศก์เมตรในรอบนี้',
+                              'Difference in ion concentration from conductivity consumed by the resin per 1 m³ of water in this step.'
                             )}
                           </div>
 
@@ -2550,29 +2554,29 @@ return (
                             <div className="font-sans font-bold text-[var(--ink)]">
                               7. Weighted Average of Cond. (mol/m³) = Σ(ΔV × ΔCond.) ÷ Σ(ΔV)
                             </div>
-                            <div className="text-[var(--ink-soft)]">
-                              {inspectorWeightedRow && inspectorWeightedRow.waCond !== null ? (
-                                <>
-                                  ค่าเฉลี่ยถ่วงน้ำหนักสะสมตั้งแต่รอบที่ 1 ถึงรอบที่ #{inspectorWeightedRow.step} ={' '}
-                                  <strong className="text-sky-600 dark:text-sky-400">
-                                    {fmtNum(inspectorWeightedRow.waCond, 6)} mol/m³
-                                  </strong>
-                                </>
-                              ) : (
-                                'คำนวณสะสมจากผลรวมของ (ΔV × ΔCond.) หารด้วยผลรวมของ ΔV ตั้งแต่รอบแรกจนถึงรอบปัจจุบัน'
-                              )}
-                            </div>
+                            {inspectorWeightedRow && inspectorWeightedRow.waCond !== null && (
+                              <div className="text-[var(--ink-soft)]">
+                                {isTh
+                                  ? `ค่าเฉลี่ยถ่วงน้ำหนักสะสมตั้งแต่รอบที่ 1 ถึงรอบที่ #${inspectorWeightedRow.step} = `
+                                  : `Cumulative weighted average from Step 1 to Step #${inspectorWeightedRow.step} = `}
+                                <strong className="text-sky-600 dark:text-sky-400">
+                                  {fmtNum(inspectorWeightedRow.waCond, 6)} mol/m³
+                                </strong>
+                              </div>
+                            )}
                             {renderHighlightedFormulaBadge(
                               'cond_wa',
-                              'ค่าเฉลี่ยถ่วงน้ำหนักสะสมของ ΔCond. ตามปริมาตรน้ำ ΔV ตั้งแต่รอบที่ 1 จนถึงรอบปัจจุบัน เพื่อใช้คาดการณ์จุดตัดรอบที่แม่นยำ',
-                              'Cumulative volume-weighted average of ΔCond. from Step 1 up to the current step.'
+                              'ค่าเฉลี่ยถ่วงน้ำหนักสะสมของค่าการนำไฟฟ้า (Conductivity) คำนวณจากผลรวมของ (ΔV × ΔCond.) หารด้วยผลรวมของ ΔV ตั้งแต่รอบแรกจนถึงรอบปัจจุบัน',
+                              'Cumulative weighted average of conductivity (Conductivity), calculated from the sum of (ΔV × ΔCond.) divided by the sum of ΔV from the first step to the current step.'
                             )}
                           </div>
 
                           {/* Cond Step 8: Cond Ion ที่ใช้ไป (mol) */}
                           <div id="formula-card-cond_removed" className={getFormulaCardClass('cond_removed')}>
                             <div className="font-sans font-bold text-[var(--ink)]">
-                              8. Ion ที่ใช้ไป (Cond., mol) = ΔCond. (mol/m³) × ΔV (m³)
+                              {isTh
+                                ? '8. Ion ที่ใช้ไป (Cond., mol) = ΔCond. (mol/m³) × ΔV (m³)'
+                                : '8. Ions Consumed (Cond., mol) = ΔCond. (mol/m³) × ΔV (m³)'}
                             </div>
                             <div className="text-[var(--ink-soft)]">
                               ({liveFormulaCalc.condConcInMolM3.toFixed(6)} − {liveFormulaCalc.condConcOutMolM3.toFixed(6)}) ×{' '}
@@ -2583,15 +2587,17 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'cond_removed',
-                              'ปริมาณโมลของไอออน (Conductivity) ที่เรซินดูดซับไว้ในรอบย่อยนี้ (ความเข้มข้นที่หายไป × ปริมาตรน้ำ ΔV)',
-                              'Moles of conductivity ions captured by the resin during this step (ΔCond. × ΔV).'
+                              'ผลต่างความเข้มข้นไอออนจากค่าการนำไฟฟ้า × ปริมาตรน้ำที่ผลิตได้ในแต่ละรอบ',
+                              'Difference in ion concentration from conductivity × water volume produced in each step.'
                             )}
                           </div>
 
                           {/* Cond Step 9: Ion load cond. สะสม (mol) */}
                           <div id="formula-card-cond_cum_load" className={getFormulaCardClass('cond_cum_load')}>
                             <div className="font-sans font-bold text-[var(--ink)]">
-                              9. Ion load cond. (mol) = ผลรวมของค่า Ion ที่ใช้ไป (mol) สะสมตาม Cycle
+                              {isTh
+                                ? '9. Ion load cond. (mol) = Σ(Cond. ion ที่ใช้ไป)'
+                                : '9. Ion load cond. (mol) = Σ(Cond. ions consumed)'}
                             </div>
                             <div className="text-[var(--ink-soft)]">
                               {liveFormulaCalc.prevCondLoad.toFixed(3)} + {liveFormulaCalc.condIonsRemoved.toFixed(3)} ={' '}
@@ -2601,15 +2607,15 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'cond_cum_load',
-                              'ปริมาณไอออนสะสมในส่วน Conductivity ที่เรซินรับไว้ทั้งหมดตั้งแต่รอบที่ 1 จนถึงรอบปัจจุบัน',
-                              'Cumulative moles of conductivity ions loaded on the resin from Step 1 to the current step.'
+                              'ปริมาณไอออน Conductivity สะสมในเรซินตั้งแต่รอบแรกจนถึงรอบปัจจุบัน',
+                              'Cumulative Conductivity ions loaded in the resin from the first step to the current step.'
                             )}
                           </div>
 
-                          {/* Cond Step 10: % Ion load cond. */}
+                          {/* Cond Step 10: %Ion load cond. */}
                           <div id="formula-card-cond_pct_load" className={getFormulaCardClass('cond_pct_load')}>
                             <div className="font-sans font-bold text-[var(--ink)]">
-                              10. % Ion load cond. (%) = (Ion load cond. ÷ Estimate maximum conductivity capacity) × 100
+                              10. %Ion load cond. = (Ion load cond. ÷ Estimate maximum conductivity capacity) × 100
                             </div>
                             <div className="text-[var(--ink-soft)]">
                               ({liveFormulaCalc.cumCondLoad.toFixed(3)} ÷ {liveFormulaCalc.activeCondCap.toFixed(2)}) × 100 ={' '}
@@ -2631,14 +2637,16 @@ return (
                         <div className="border-b border-[var(--line)] pb-2 space-y-1 font-sans">
                           <div className="flex items-center justify-between gap-2">
                             <h4 className="text-xs sm:text-sm font-bold text-indigo-600 dark:text-indigo-400">
-                              ส่วนที่ 2: Silica (SiO₂)
+                              {isTh ? 'ส่วนที่ 2: Silica (SiO₂)' : 'Section 2: Silica (SiO₂)'}
                             </h4>
                             <span className="text-xs font-mono font-semibold text-[var(--ink-soft)]">
                               MW SiO₂ = 60.08 g/mol · Capacity = {liveFormulaCalc.activeSilicaCap.toFixed(2)} mol
                             </span>
                           </div>
                           <div className="text-xs text-[var(--ink-soft)]">
-                            Input ที่ผู้ใช้กรอก: 1. Cycle (m³) · 2. Silica MB Inlet (ppb) · 3. Silica MB Outlet (ppb)
+                            {isTh
+                              ? 'Input ที่ผู้ใช้กรอก: 1. Cycle (m³) · 2. Silica MB Inlet (ppb) · 3. Silica MB Outlet (ppb)'
+                              : 'User Inputs: 1. Cycle (m³) · 2. Silica MB Inlet (ppb) · 3. Silica MB Outlet (ppb)'}
                           </div>
                         </div>
 
@@ -2646,7 +2654,9 @@ return (
                           {/* Silica Step 1: ΔV */}
                           <div id="formula-card-silica_dv" className={getFormulaCardClass('silica_dv')}>
                             <div className="font-sans font-bold text-[var(--ink)]">
-                              1. ระยะห่าง Cycle (ΔV, m³) = Cycle รวมปัจจุบัน − Cycle รอบก่อนหน้า
+                              {isTh
+                                ? '1. ระยะห่าง Cycle (ΔV, m³) = Cycle รวมปัจจุบัน − Cycle รอบก่อนหน้า'
+                                : '1. Cycle Interval (ΔV, m³) = Current Cumulative Cycle − Previous Cycle'}
                             </div>
                             <div className="text-[var(--ink-soft)]">
                               {liveFormulaCalc.currentCycleVol.toFixed(2)} − {liveFormulaCalc.prevCycleVol.toFixed(2)} ={' '}
@@ -2654,8 +2664,8 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'silica_dv',
-                              'ปริมาตรน้ำที่ผลิตในรอบย่อยนี้ (ΔV) คำนวณจากผลต่างของ Cycle ปัจจุบันกับ Cycle รอบก่อนหน้า',
-                              'Incremental water volume for this step (ΔV = current Cycle minus previous Cycle).'
+                              'คำนวณปริมาตรน้ำที่ผลิตได้ในรอบนี้ (ΔV) โดยนำปริมาตรสะสมของรอบปัจจุบันลบด้วยปริมาตรสะสมของรอบก่อนหน้า',
+                              'Calculates the water volume produced in this step (ΔV) by subtracting the previous cumulative volume from the current cumulative volume.'
                             )}
                           </div>
 
@@ -2672,8 +2682,8 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'silica_in_mol_l',
-                              'แปลงค่าซิลิกาขาเข้าจากหน่วย ppb (µg/L) เป็นกรัมต่อลิตร แล้วหารด้วยมวลโมเลกุลของ SiO₂ (60.08 g/mol)',
-                              'Converts inlet silica from ppb (µg/L) to mol/L using SiO₂ molar mass 60.08 g/mol.'
+                              'แปลงค่าซิลิกาขาเข้า (ppb, µg/L) เป็นความเข้มข้นโมลต่อลิตร (mol/L) แล้วหารด้วยมวลโมเลกุลของ Silica (60.08 g/mol)',
+                              'Converts inlet silica (ppb, µg/L) to molar concentration (mol/L) and divides by the molecular weight of Silica (60.08 g/mol).'
                             )}
                           </div>
 
@@ -2690,8 +2700,8 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'silica_in_mol_m3',
-                              'แปลงความเข้มข้นซิลิกาขาเข้าจากหน่วย mol/L เป็นโมลต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
-                              'Converts inlet silica molar concentration from mol/L to mol/m³ (× 1,000).'
+                              'แปลงความเข้มข้นไอออนซิลิกาขาเข้า (mol/L) เป็นโมลต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
+                              'Converts inlet silica ion concentration (mol/L) to moles per cubic meter (mol/m³) by multiplying by 1,000.'
                             )}
                           </div>
 
@@ -2708,8 +2718,8 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'silica_out_mol_l',
-                              'แปลงค่าซิลิกาขาออกจากหน่วย ppb เป็นโมลต่อลิตร (mol/L) ด้วยมวลโมเลกุล 60.08 g/mol',
-                              'Converts outlet silica from ppb to mol/L using SiO₂ molar mass 60.08 g/mol.'
+                              'แปลงค่าซิลิกาขาออก (ppb, µg/L) เป็นความเข้มข้นโมลต่อลิตร (mol/L) แล้วหารด้วยมวลโมเลกุลของ Silica (60.08 g/mol)',
+                              'Converts outlet silica (ppb, µg/L) to molar concentration (mol/L) and divides by the molecular weight of Silica (60.08 g/mol).'
                             )}
                           </div>
 
@@ -2726,8 +2736,8 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'silica_out_mol_m3',
-                              'แปลงความเข้มข้นซิลิกาขาออกจากหน่วย mol/L เป็นโมลต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
-                              'Converts outlet silica molar concentration from mol/L to mol/m³ (× 1,000).'
+                              'แปลงความเข้มข้นไอออนซิลิกาขาออก (mol/L) เป็นโมลต่อลูกบาศก์เมตร (mol/m³) โดยคูณ 1,000',
+                              'Converts outlet silica ion concentration (mol/L) to moles per cubic meter (mol/m³) by multiplying by 1,000.'
                             )}
                           </div>
 
@@ -2744,8 +2754,8 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'silica_delta',
-                              'ปริมาณซิลิกาที่ถูกเรซินกำจัดออกไปต่อน้ำ 1 ลูกบาศก์เมตรในรอบนั้น (Inlet ลบด้วย Outlet)',
-                              'Net silica concentration removed by the resin per m³ of water in this step.'
+                              'ผลต่างความเข้มข้นไอออนจากค่าซิลิกา ที่ถูกเรซินใช้ไปต่อน้ำ 1 ลูกบาศก์เมตรในรอบนี้',
+                              'Difference in ion concentration from silica consumed by the resin per 1 m³ of water in this step.'
                             )}
                           </div>
 
@@ -2754,29 +2764,29 @@ return (
                             <div className="font-sans font-bold text-[var(--ink)]">
                               7. Weighted Average of Silica (mol/m³) = Σ(ΔV × ΔSilica) ÷ Σ(ΔV)
                             </div>
-                            <div className="text-[var(--ink-soft)]">
-                              {inspectorWeightedRow && inspectorWeightedRow.waSilica !== null ? (
-                                <>
-                                  ค่าเฉลี่ยถ่วงน้ำหนักสะสมตั้งแต่รอบที่ 1 ถึงรอบที่ #{inspectorWeightedRow.step} ={' '}
-                                  <strong className="text-indigo-600 dark:text-indigo-400">
-                                    {fmtNum(inspectorWeightedRow.waSilica, 6)} mol/m³
-                                  </strong>
-                                </>
-                              ) : (
-                                'คำนวณสะสมจากผลรวมของ (ΔV × ΔSilica) หารด้วยผลรวมของ ΔV ตั้งแต่รอบแรกจนถึงรอบปัจจุบัน'
-                              )}
-                            </div>
+                            {inspectorWeightedRow && inspectorWeightedRow.waSilica !== null && (
+                              <div className="text-[var(--ink-soft)]">
+                                {isTh
+                                  ? `ค่าเฉลี่ยถ่วงน้ำหนักสะสมตั้งแต่รอบที่ 1 ถึงรอบที่ #${inspectorWeightedRow.step} = `
+                                  : `Cumulative weighted average from Step 1 to Step #${inspectorWeightedRow.step} = `}
+                                <strong className="text-indigo-600 dark:text-indigo-400">
+                                  {fmtNum(inspectorWeightedRow.waSilica, 6)} mol/m³
+                                </strong>
+                              </div>
+                            )}
                             {renderHighlightedFormulaBadge(
                               'silica_wa',
-                              'ค่าเฉลี่ยถ่วงน้ำหนักสะสมของ ΔSilica ตามปริมาตรน้ำ ΔV ตั้งแต่รอบที่ 1 จนถึงรอบปัจจุบัน',
-                              'Cumulative volume-weighted average of ΔSilica from Step 1 up to the current step.'
+                              'ค่าเฉลี่ยถ่วงน้ำหนักสะสมของปริมาณซิลิกา (Silica) คำนวณจากผลรวมของ (ΔV × ΔSilica) หารด้วยผลรวมของ ΔV ตั้งแต่รอบแรกจนถึงรอบปัจจุบัน',
+                              'Cumulative weighted average of silica (Silica), calculated from the sum of (ΔV × ΔSilica) divided by the sum of ΔV from the first step to the current step.'
                             )}
                           </div>
 
                           {/* Silica Step 8: Ion ที่ใช้ไป (mol) */}
                           <div id="formula-card-silica_removed" className={getFormulaCardClass('silica_removed')}>
                             <div className="font-sans font-bold text-[var(--ink)]">
-                              8. Ion ที่ใช้ไป (Silica, mol) = ΔSilica (mol/m³) × ΔV (m³)
+                              {isTh
+                                ? '8. Ion ที่ใช้ไป (Silica, mol) = ΔSilica (mol/m³) × ΔV (m³)'
+                                : '8. Ions Consumed (Silica, mol) = ΔSilica (mol/m³) × ΔV (m³)'}
                             </div>
                             <div className="text-[var(--ink-soft)]">
                               ({liveFormulaCalc.silicaConcInMolM3.toFixed(6)} − {liveFormulaCalc.silicaConcOutMolM3.toFixed(6)}) ×{' '}
@@ -2787,15 +2797,17 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'silica_removed',
-                              'ปริมาณโมลของซิลิกาที่เรซินจับไว้ในรอบย่อยนี้ (ความเข้มข้นซิลิกาที่หายไป × ปริมาตรน้ำ ΔV)',
-                              'Moles of silica captured by the resin during this step (ΔSilica × ΔV).'
+                              'ผลต่างความเข้มข้นไอออนจากค่าซิลิกา × ปริมาตรน้ำที่ผลิตได้ในแต่ละรอบ',
+                              'Difference in ion concentration from silica × water volume produced in each step.'
                             )}
                           </div>
 
                           {/* Silica Step 9: Ion load silica (mol) */}
                           <div id="formula-card-silica_cum_load" className={getFormulaCardClass('silica_cum_load')}>
                             <div className="font-sans font-bold text-[var(--ink)]">
-                              9. Ion load silica (mol) = ผลรวมของค่า Silica Ion ที่ใช้ไป (mol) สะสมตาม Cycle
+                              {isTh
+                                ? '9. Ion load silica (mol) = Σ(Silica ion ที่ใช้ไป)'
+                                : '9. Ion load silica (mol) = Σ(Silica ions consumed)'}
                             </div>
                             <div className="text-[var(--ink-soft)]">
                               {liveFormulaCalc.prevSilicaLoad.toFixed(3)} + {liveFormulaCalc.silicaIonsRemoved.toFixed(3)} ={' '}
@@ -2805,15 +2817,15 @@ return (
                             </div>
                             {renderHighlightedFormulaBadge(
                               'silica_cum_load',
-                              'ปริมาณโมลซิลิกาสะสมทั้งหมดที่เรซินดูดซับไว้ตั้งแต่รอบที่ 1 จนถึงรอบปัจจุบัน',
-                              'Cumulative moles of silica loaded on the resin from Step 1 to the current step.'
+                              'ปริมาณไอออน Silica สะสมในเรซินตั้งแต่รอบแรกจนถึงรอบปัจจุบัน',
+                              'Cumulative Silica ions loaded in the resin from the first step to the current step.'
                             )}
                           </div>
 
-                          {/* Silica Step 10: %Ion load silica */}
+                          {/* Silica Step 10: %Ion load silica. */}
                           <div id="formula-card-silica_pct_load" className={getFormulaCardClass('silica_pct_load')}>
                             <div className="font-sans font-bold text-[var(--ink)]">
-                              10. %Ion load silica (%) = (Ion load silica ÷ Estimate maximum silica capacity) × 100
+                              10. %Ion load silica. = (Ion load silica ÷ Estimate maximum silica capacity) × 100
                             </div>
                             <div className="text-[var(--ink-soft)]">
                               ({liveFormulaCalc.cumSilicaLoad.toFixed(3)} ÷ {liveFormulaCalc.activeSilicaCap.toFixed(2)}) × 100 ={' '}

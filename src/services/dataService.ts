@@ -12,9 +12,9 @@ import { db, auth, handleFirestoreError, OperationType } from '../firebase';
 
 export const LAMBDA_0_NACL = 126.45;
 export const MOLAR_MASS_SIO2 = 60.08;
-export const DEFAULT_COND_CAPACITY = 73.91;
-export const DEFAULT_SILICA_CAPACITY = 5.68;
-export const DEFAULT_RESIN_CAPACITY = 79.59; // 73.91 + 5.68 = 79.59 mol (100% Combined Resin Capacity for Train A)
+export const DEFAULT_COND_CAPACITY = 73.75;
+export const DEFAULT_SILICA_CAPACITY = 5.81;
+export const DEFAULT_RESIN_CAPACITY = 79.56; // 73.75 + 5.81 = 79.56 mol (100% Combined Resin Capacity for Train A)
 export const DEFAULT_TRAIN_B_COND_CAPACITY = 106.47;
 export const DEFAULT_TRAIN_B_SILICA_CAPACITY = 5.93;
 export const DEFAULT_TRAIN_B_RESIN_CAPACITY = 112.40; // 106.47 + 5.93 = 112.40 mol (100% Combined Resin Capacity for Train B)
@@ -207,9 +207,9 @@ export function recalculateBatchRows(
 ): BatchCalculationResult {
   const cCap = condCapacity > 0 ? condCapacity : DEFAULT_COND_CAPACITY;
   const sCap = silicaCapacity > 0 ? silicaCapacity : DEFAULT_SILICA_CAPACITY;
-  const totalCap = Number((cCap + sCap).toFixed(4)); // Default Train A: 73.91 + 5.68 = 79.59 mol
-  const warnMol = Number((totalCap * 0.9).toFixed(2)); // Default Train A: 71.63 mol
-  const stopMol = Number((totalCap * 0.95).toFixed(2)); // Default Train A: 75.61 mol
+  const totalCap = Number((cCap + sCap).toFixed(4)); // Default Train A: 73.75 + 5.81 = 79.56 mol
+  const warnMol = Number((totalCap * 0.9).toFixed(2)); // Default Train A: 71.60 mol
+  const stopMol = Number((totalCap * 0.95).toFixed(2)); // Default Train A: 75.58 mol
 
   if (!rawInputs || rawInputs.length === 0) {
     return {
@@ -448,16 +448,20 @@ export function normalizeCycleRecordToBatch(record: CyclePredictionRecord): Cycl
   const defaultCond = isTrainB ? DEFAULT_TRAIN_B_COND_CAPACITY : DEFAULT_COND_CAPACITY;
   const defaultSilica = isTrainB ? DEFAULT_TRAIN_B_SILICA_CAPACITY : DEFAULT_SILICA_CAPACITY;
 
-  const condCap =
+  const rawCondCap =
     record.condCapacity && record.condCapacity > 0
       ? record.condCapacity
       : record.resinCapacity && record.resinCapacity > 10 && record.resinCapacity < 79
       ? record.resinCapacity
       : defaultCond;
-  const silicaCap =
+  const condCap =
+    !isTrainB && Math.round(rawCondCap * 100) === 7391 ? DEFAULT_COND_CAPACITY : rawCondCap;
+  const rawSilicaCap =
     record.silicaCapacity && record.silicaCapacity > 0
       ? record.silicaCapacity
       : defaultSilica;
+  const silicaCap =
+    !isTrainB && Math.round(rawSilicaCap * 100) === 568 ? DEFAULT_SILICA_CAPACITY : rawSilicaCap;
 
   if (Array.isArray(record.rows) && record.rows.length > 0) {
     const recalc = recalculateBatchRows(

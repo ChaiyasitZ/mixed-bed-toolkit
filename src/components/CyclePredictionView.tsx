@@ -369,6 +369,13 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
       if (saved) {
         const parsed: MultiTrainWorkspaceDraft = JSON.parse(saved);
         if (parsed && parsed.trains) {
+          const loadedA = { ...defA, ...(parsed.trains.A || {}) };
+          if (Math.round(parseFloat(loadedA.condCapacity) * 100) === 7391) {
+            loadedA.condCapacity = DEFAULT_COND_CAPACITY.toString();
+          }
+          if (Math.round(parseFloat(loadedA.silicaCapacity) * 100) === 568) {
+            loadedA.silicaCapacity = DEFAULT_SILICA_CAPACITY.toString();
+          }
           const loadedB = { ...defB, ...(parsed.trains.B || {}) };
           // Automatically upgrade legacy 15-row Train B Set 1 draft to the full 25-row Train B Set 1 dataset
           if (
@@ -384,7 +391,7 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
             loadedB.batchName = 'ชุดที่ 1 - Train B (25 รอบ)';
           }
           return {
-            A: { ...defA, ...(parsed.trains.A || {}) },
+            A: loadedA,
             B: loadedB,
           };
         }
@@ -821,8 +828,8 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
   //   ΔCond.  (mol/m³) = Cond. Inlet (mol/m³) − Cond. Outlet (mol/m³)
   //   Weighted Average of Silica = Σ(ΔV × ΔSilica) ÷ Σ(ΔV)
   //   Weighted Average of Cond.  = Σ(ΔV × ΔCond.) ÷ Σ(ΔV)
-  //   90% Warning (m³) = (Capacity × 0.90) ÷ (Weighted Average Silica + Weighted Average Cond.) → Train A: 71.63 mol
-  //   95% Stop    (m³) = (Capacity × 0.95) ÷ (Weighted Average Silica + Weighted Average Cond.) → Train A: 75.61 mol
+  //   90% Warning (m³) = (Capacity × 0.90) ÷ (Weighted Average Silica + Weighted Average Cond.) → Train A: 71.60 mol
+  //   95% Stop    (m³) = (Capacity × 0.95) ÷ (Weighted Average Silica + Weighted Average Cond.) → Train A: 75.58 mol
   const weightedPrediction = useMemo(() => {
     const warnMol = Number((totalCap * 0.9).toFixed(2));
     const stopMol = Number((totalCap * 0.95).toFixed(2));
@@ -2121,7 +2128,7 @@ return (
                     step="0.01"
                     value={condCapacity}
                     onChange={(e) => setCondCapacity(e.target.value)}
-                    placeholder={train === 'B' ? '106.47' : '73.91'}
+                    placeholder={train === 'B' ? '106.47' : '73.75'}
                     className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/50 placeholder:font-normal"
                   />
                 </div>
@@ -2136,7 +2143,7 @@ return (
                     step="0.01"
                     value={silicaCapacity}
                     onChange={(e) => setSilicaCapacity(e.target.value)}
-                    placeholder={train === 'B' ? '5.93' : '5.68'}
+                    placeholder={train === 'B' ? '5.93' : '5.81'}
                     className="w-full text-xs sm:text-sm font-mono tabular-nums font-bold px-3 py-2 rounded-xl border border-[var(--line)] bg-[var(--bg)] text-[var(--ink)] placeholder:text-[var(--ink-soft)]/50 placeholder:font-normal"
                   />
                 </div>
@@ -2963,10 +2970,10 @@ return (
                             Train A
                           </div>
                           <ul className="space-y-0.5 text-[var(--ink-soft)] font-mono">
-                            <li>• Estimate maximum conductivity capacity(mol) = <strong className="text-[var(--ink)]">73.91</strong></li>
-                            <li>• Estimate maximum silica capacity(mol) = <strong className="text-[var(--ink)]">5.68</strong></li>
-                            <li>• Total Capacity (100%) = 73.91 + 5.68 = <strong className="text-emerald-600 dark:text-emerald-400">79.59</strong></li>
-                            <li className="font-sans">• จุดแจ้งเตือนระบบ (90%) = <strong className="text-amber-500">71.63 mol</strong> · จุดหยุดระบบ (95%) = <strong className="text-rose-500">75.61 mol</strong></li>
+                            <li>• Estimate maximum conductivity capacity(mol) = <strong className="text-[var(--ink)]">73.75</strong></li>
+                            <li>• Estimate maximum silica capacity(mol) = <strong className="text-[var(--ink)]">5.81</strong></li>
+                            <li>• Total Capacity (100%) = 73.75 + 5.81 = <strong className="text-emerald-600 dark:text-emerald-400">79.56</strong></li>
+                            <li className="font-sans">• จุดแจ้งเตือนระบบ (90%) = <strong className="text-amber-500">71.60 mol</strong> · จุดหยุดระบบ (95%) = <strong className="text-rose-500">75.58 mol</strong></li>
                           </ul>
                         </div>
 

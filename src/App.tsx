@@ -26,11 +26,31 @@ import {
 const LOCAL_SALT_KEY = 'mb_toolkit_salt_local_v2';
 const LOCAL_SILICA_KEY = 'mb_toolkit_silica_local_v2';
 const LOCAL_CYCLE_KEY = 'mb_toolkit_cycle_local_v2';
+const ACTIVE_VIEW_KEY = 'mb_toolkit_active_view';
 
 function MainApp() {
   const { user } = useAuth();
   const { language } = useLanguage();
-  const [currentView, setCurrentView] = useState<ViewType>('home');
+  const [currentView, setCurrentView] = useState<ViewType>(() => {
+    try {
+      const savedView = localStorage.getItem(ACTIVE_VIEW_KEY);
+      if (savedView === 'home' || savedView === 'cycle' || savedView === 'history') {
+        return savedView;
+      }
+    } catch {
+      // ignore
+    }
+    return 'home';
+  });
+
+  useEffect(() => {
+    try {
+      const viewToSave = currentView === 'salt' || currentView === 'silica' ? 'cycle' : currentView;
+      localStorage.setItem(ACTIVE_VIEW_KEY, viewToSave);
+    } catch {
+      // ignore
+    }
+  }, [currentView]);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('mb_toolkit_theme');
     if (saved === 'dark' || saved === 'light') return saved;
@@ -129,7 +149,7 @@ function MainApp() {
     }
   }, [localCycleRecords, user]);
 
-  // Realtime Firestore listeners when user is authenticated
+  // Realtime Firestore listener when user is authenticated (only subscribe to active Cycle Predictions)
   useEffect(() => {
     const uid = user?.uid;
     if (!uid) {
@@ -139,21 +159,11 @@ function MainApp() {
       return;
     }
 
-    const unsubSalt = subscribeSaltRecords(uid, (records) => {
-      setCloudSaltRecords(records);
-    });
-
-    const unsubSilica = subscribeSilicaRecords(uid, (records) => {
-      setCloudSilicaRecords(records);
-    });
-
     const unsubCycle = subscribeCyclePredictions(uid, (records) => {
       setCloudCycleRecords(records);
     });
 
     return () => {
-      unsubSalt();
-      unsubSilica();
       unsubCycle();
     };
   }, [user?.uid]);
@@ -308,9 +318,8 @@ function MainApp() {
 
       {/* Main Content Viewport - Responsive across Mobile, Tablet, and Desktop */}
       <main
-        className={`flex-1 min-w-0 overflow-x-hidden px-3.5 sm:px-6 md:px-8 lg:px-10 py-4 sm:py-6 md:py-8 pb-24 md:pb-12 transition-[padding] duration-200 ${
-          isSidebarHidden ? 'md:pt-16' : ''
-        }`}
+        className={`flex-1 min-w-0 overflow-x-hidden px-3.5 sm:px-6 md:px-8 lg:px-10 py-4 sm:py-6 md:py-8 pb-24 md:pb-12 transition-[padding] duration-200 ${isSidebarHidden ? 'md:pt-16' : ''
+          }`}
       >
         <div className="max-w-7xl mx-auto space-y-4">
           {/* Local-to-Cloud Sync Prompt Banner when signed in and local guest batches exist */}
@@ -344,8 +353,8 @@ function MainApp() {
                           ? 'กำลังซิงค์...'
                           : 'Syncing...'
                         : language === 'th'
-                        ? `ซิงค์ขึ้น Cloud (${localCycleRecords.length} ชุด)`
-                        : `Sync to Cloud (${localCycleRecords.length})`}
+                          ? `ซิงค์ขึ้น Cloud (${localCycleRecords.length} ชุด)`
+                          : `Sync to Cloud (${localCycleRecords.length})`}
                     </span>
                   </button>
                   <button

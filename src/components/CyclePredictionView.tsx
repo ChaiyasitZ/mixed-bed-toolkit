@@ -3385,12 +3385,12 @@ return (
               </div>
             ) : (
               /* Compact Two-Line Header Engineering Table (High-contrast readable headers with stacked units) */
-              <div className="overflow-x-auto max-h-[480px] overflow-y-auto rounded-xl border border-[var(--line)]">
+              <div className="overflow-x-auto max-h-[540px] overflow-y-auto rounded-xl border border-[var(--line)] relative">
                 <table className="w-full text-xs sm:text-[13px] text-left border-collapse">
-                  <thead className="sticky top-0 bg-slate-100 dark:bg-slate-800/95 text-[var(--ink)] font-bold border-b-2 border-[var(--line)] z-10">
+                  <thead className="sticky top-0 bg-slate-100/95 dark:bg-slate-800/95 backdrop-blur-xs text-[var(--ink)] font-bold border-b-2 border-[var(--line)] z-20 shadow-2xs">
                     {tableTab === 'input' && (
                       <tr className="align-top">
-                        <th className="py-2.5 px-3 text-center text-[13px] sm:text-sm font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 whitespace-nowrap">#</th>
+                        <th className="py-2.5 px-3 text-center text-[13px] sm:text-sm font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-30 border-r border-[var(--line)]/60 whitespace-nowrap">#</th>
                         <th className="py-2.5 px-3 whitespace-nowrap">
                           <div className="leading-snug">
                             <div className="text-[13px] sm:text-sm font-bold text-[var(--ink)]">{isTh ? 'รอบ' : 'Step'}</div>
@@ -3431,7 +3431,7 @@ return (
                     )}
                     {tableTab === 'silica' && (
                       <tr className="align-top">
-                        <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 whitespace-nowrap">#</th>
+                        <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-30 border-r border-[var(--line)]/60 whitespace-nowrap">#</th>
                         <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
                           <div className="leading-snug">
                             <div className="text-[13px] font-bold text-[var(--ink)]">Cycle</div>
@@ -3515,7 +3515,7 @@ return (
                     )}
                     {tableTab === 'cond' && (
                       <tr className="align-top">
-                        <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 whitespace-nowrap">#</th>
+                        <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-30 border-r border-[var(--line)]/60 whitespace-nowrap">#</th>
                         <th className="py-2.5 px-2.5 text-right whitespace-nowrap">
                           <div className="leading-snug">
                             <div className="text-[13px] font-bold text-[var(--ink)]">Cycle</div>
@@ -3587,7 +3587,7 @@ return (
                     )}
                     {tableTab === 'weighted' && (
                       <tr className="align-top">
-                        <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 whitespace-nowrap">#</th>
+                        <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-30 border-r border-[var(--line)]/60 whitespace-nowrap">#</th>
                         {[
                           { title: 'Cycle', unit: '(m³)', tone: '' },
                           { title: 'ΔV', unit: '(m³)', tone: '' },
@@ -3621,7 +3621,7 @@ return (
                     )}
                     {tableTab === 'predict' && (
                       <tr className="align-top">
-                        <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-20 whitespace-nowrap">#</th>
+                        <th className="py-2.5 px-2.5 text-center text-[13px] font-bold text-[var(--ink)] sticky left-0 bg-slate-100 dark:bg-slate-800 z-30 border-r border-[var(--line)]/60 whitespace-nowrap">#</th>
                         {[
                           { title: 'Cycle', unit: '(m³)', tone: '' },
                           { title: 'Weighted Average of Silica', unit: '(mol/m³)', tone: 'silica' },
@@ -3686,7 +3686,7 @@ return (
                         >
                           {tableTab === 'input' && (
                             <>
-                              <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 bg-[var(--panel)]">
+                              <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 z-10 bg-[var(--panel)] border-r border-[var(--line)]/60">
                                 {c.step}
                               </td>
                               <td className="py-2 px-2.5 font-sans font-medium">{c.label}</td>
@@ -3706,7 +3706,7 @@ return (
 
                           {tableTab === 'silica' && (
                             <>
-                              <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 bg-[var(--panel)]">
+                              <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 z-10 bg-[var(--panel)] border-r border-[var(--line)]/60">
                                 {c.step}
                               </td>
                               <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">{c.cycleEnd.toFixed(2)}</td>
@@ -3718,14 +3718,14 @@ return (
                                 {renderFormulaLinkCell('silica_in_mol_l', idx, c, 'Silica Inlet (mol/L)', c.silicaConcInMolL.toFixed(7))}
                               </td>
                               <td className="py-2 px-2.5 text-right font-semibold">
-                                {renderFormulaLinkCell('silica_in_mol_m3', idx, c, 'Silica Inlet (mol/m³)', c.silicaConcInMolM3.toFixed(3))}
+                                {renderFormulaLinkCell('silica_in_mol_m3', idx, c, 'Silica Inlet (mol/m³)', c.silicaConcInMolM3.toFixed(6))}
                               </td>
                               <td className="py-2 px-2.5 text-right">{c.silicaOut.toFixed(2)}</td>
                               <td className="py-2 px-2.5 text-right">
                                 {renderFormulaLinkCell('silica_out_mol_l', idx, c, 'Silica Outlet (mol/L)', c.silicaConcOutMolL.toFixed(8))}
                               </td>
                               <td className="py-2 px-2.5 text-right font-semibold">
-                                {renderFormulaLinkCell('silica_out_mol_m3', idx, c, 'Silica Outlet (mol/m³)', c.silicaConcOutMolM3.toFixed(3))}
+                                {renderFormulaLinkCell('silica_out_mol_m3', idx, c, 'Silica Outlet (mol/m³)', c.silicaConcOutMolM3.toFixed(6))}
                               </td>
                               <td className="py-2 px-2.5 text-right">
                                 {renderFormulaLinkCell('silica_delta', idx, c, 'ΔSilica (mol/m³)', fmtNum(wp?.dSilica, 6))}
@@ -3761,7 +3761,7 @@ return (
 
                           {tableTab === 'cond' && (
                             <>
-                              <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 bg-[var(--panel)]">
+                              <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 z-10 bg-[var(--panel)] border-r border-[var(--line)]/60">
                                 {c.step}
                               </td>
                               <td className="py-2 px-2.5 text-right font-bold text-[var(--ink)]">{c.cycleEnd.toFixed(2)}</td>
@@ -3770,11 +3770,11 @@ return (
                               </td>
                               <td className="py-2 px-2.5 text-right">{c.condIn.toFixed(3)}</td>
                               <td className="py-2 px-2.5 text-right">
-                                {renderFormulaLinkCell('cond_in_mol_m3', idx, c, 'Cond. Inlet (mol/m³)', c.concInMolM3.toFixed(3))}
+                                {renderFormulaLinkCell('cond_in_mol_m3', idx, c, 'Cond. Inlet (mol/m³)', c.concInMolM3.toFixed(6))}
                               </td>
                               <td className="py-2 px-2.5 text-right">{c.condOut.toFixed(3)}</td>
                               <td className="py-2 px-2.5 text-right">
-                                {renderFormulaLinkCell('cond_out_mol_m3', idx, c, 'Cond. Outlet (mol/m³)', c.concOutMolM3.toFixed(3))}
+                                {renderFormulaLinkCell('cond_out_mol_m3', idx, c, 'Cond. Outlet (mol/m³)', c.concOutMolM3.toFixed(6))}
                               </td>
                               <td className="py-2 px-2.5 text-right">
                                 {renderFormulaLinkCell('cond_delta', idx, c, 'ΔCond. (mol/m³)', fmtNum(wp?.dCond, 6))}
@@ -3810,7 +3810,7 @@ return (
 
                           {tableTab === 'weighted' && (
                             <>
-                              <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 bg-[var(--panel)]">
+                              <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 z-10 bg-[var(--panel)] border-r border-[var(--line)]/60">
                                 <span className="inline-flex items-center gap-1">
                                   {c.step}
                                   {wp && !wp.isValid && (
@@ -3867,7 +3867,7 @@ return (
 
                           {tableTab === 'predict' && (
                             <>
-                              <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 bg-[var(--panel)]">
+                              <td className="py-2 px-2.5 text-center text-[var(--ink-soft)] sticky left-0 z-10 bg-[var(--panel)] border-r border-[var(--line)]/60">
                                 <span className="inline-flex items-center gap-1">
                                   {c.step}
                                   {wp && !wp.isValid && (

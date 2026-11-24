@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { PanelLeftOpen } from 'lucide-react';
+import { PanelLeftOpen, CloudUpload, CheckCircle2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
@@ -17,6 +17,7 @@ import {
   subscribeSaltRecords,
   subscribeSilicaRecords,
   subscribeCyclePredictions,
+  addCyclePrediction,
   deleteSaltRecord,
   deleteSilicaRecord,
   deleteCyclePrediction,
@@ -41,6 +42,9 @@ function MainApp() {
     return localStorage.getItem('mb_toolkit_sidebar_hidden') === 'true';
   });
   const [batchToLoadInCycleView, setBatchToLoadInCycleView] = useState<CyclePredictionRecord | null>(null);
+  const [isSyncingLocalToCloud, setIsSyncingLocalToCloud] = useState(false);
+  const [isLocalSyncBannerDismissed, setIsLocalSyncBannerDismissed] = useState(false);
+  const [syncSuccessToast, setSyncSuccessToast] = useState<string | null>(null);
 
   const toggleSidebarHidden = () => {
     setIsSidebarHidden((prev) => {
@@ -219,6 +223,30 @@ function MainApp() {
     }
   };
 
+  const handleSyncLocalBatchesToCloud = async () => {
+    if (!user || localCycleRecords.length === 0 || isSyncingLocalToCloud) return;
+    setIsSyncingLocalToCloud(true);
+    try {
+      const count = localCycleRecords.length;
+      for (const rec of localCycleRecords) {
+        const { id: _id, userId: _uid, createdAt, ...payload } = rec;
+        await addCyclePrediction(payload, createdAt || new Date().toISOString());
+      }
+      setLocalCycleRecords([]);
+      localStorage.removeItem(LOCAL_CYCLE_KEY);
+      setSyncSuccessToast(
+        language === 'th'
+          ? `ซิงค์ชุดข้อมูลจากเครื่องขึ้น Cloud เรียบร้อยแล้ว (${count} ชุด)`
+          : `Successfully synced ${count} local batch(es) to Cloud.`
+      );
+      setTimeout(() => setSyncSuccessToast(null), 4000);
+    } catch (err) {
+      console.error('Failed to sync local records to cloud:', err);
+    } finally {
+      setIsSyncingLocalToCloud(false);
+    }
+  };
+
   const activeNormalizedView =
     currentView === 'salt' || currentView === 'silica' ? 'cycle' : currentView;
 
@@ -284,7 +312,76 @@ function MainApp() {
           isSidebarHidden ? 'md:pt-16' : ''
         }`}
       >
-        <div className="max-w-7xl mx-auto">
+        <div className="max-w-7xl mx-auto space-y-4">
+          {/* Local-to-Cloud Sync Prompt Banner when signed in and local guest batches exist */}
+          <AnimatePresence>
+            {user && localCycleRecords.length > 0 && !isLocalSyncBannerDismissed && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                className="p-3.5 rounded-2xl bg-sky-500/10 border border-sky-500/30 flex flex-wrap items-center justify-between gap-3 text-xs"
+              >
+                <div className="flex items-center gap-2.5 text-[var(--ink)]">
+                  <CloudUpload className="w-4 h-4 text-sky-500 shrink-0" />
+                  <span>
+                    {language === 'th'
+                      ? `พบชุดข้อมูลที่บันทึกไว้ในเครื่อง (โหมดผู้เยี่ยมชม) จำนวน ${localCycleRecords.length} ชุด ต้องการโอนย้ายขึ้นบัญชี Cloud ของคุณหรือไม่?`
+                      : `Found ${localCycleRecords.length} batch(es) saved locally on this device. Sync them to your Cloud account?`}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSyncLocalBatchesToCloud}
+                    disabled={isSyncingLocalToCloud}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-bold cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                  >
+                    <CloudUpload className="w-3.5 h-3.5" />
+                    <span>
+                      {isSyncingLocalToCloud
+                        ? language === 'th'
+                          ? 'กำลังซิงค์...'
+                          : 'Syncing...'
+                        : language === 'th'
+                        ? `ซิงค์ขึ้น Cloud (${localCycleRecords.length} ชุด)`
+                        : `Sync to Cloud (${localCycleRecords.length})`}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsLocalSyncBannerDismissed(true)}
+                    className="p-1.5 rounded-lg text-[var(--ink-soft)] hover:text-[var(--ink)] hover:bg-[var(--panel)] cursor-pointer"
+                    title={language === 'th' ? 'ซ่อนข้อความนี้' : 'Dismiss'}
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </motion.div>
+            )}
+
+            {syncSuccessToast && (
+              <motion.div
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-semibold flex items-center justify-between gap-2"
+              >
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <span>{syncSuccessToast}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSyncSuccessToast(null)}
+                  className="p-1 rounded hover:bg-emerald-500/10 cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <AnimatePresence mode="wait">
             {activeNormalizedView === 'home' && (
               <motion.div

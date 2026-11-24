@@ -28,8 +28,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const { user } = useAuth();
   const isTh = language === 'th';
 
-  // Only show saved batch metrics when the user is logged in and has saved records
-  const activeRecords = user ? cycleRecords : [];
+  // Show saved batch metrics from active records (Cloud when signed in, Local storage when guest)
+  const activeRecords = cycleRecords;
   const latestBatch = activeRecords[0] ? normalizeCycleRecordToBatch(activeRecords[0]) : null;
   const totalBatches = activeRecords.length;
 
@@ -129,11 +129,22 @@ export const HomeView: React.FC<HomeViewProps> = ({
           transition={{ duration: 0.18 }}
           className="p-3.5 sm:p-4 rounded-xl bg-[var(--panel)] border border-[var(--line)] space-y-1"
         >
-          <div className="text-xs sm:text-[13px] font-semibold text-[var(--ink)] truncate">
-            {isTh ? 'ชุดข้อมูลที่บันทึก' : 'Saved Batches'}
+          <div className="flex items-center justify-between gap-1.5">
+            <div className="text-xs sm:text-[13px] font-semibold text-[var(--ink)] truncate">
+              {isTh ? 'ชุดข้อมูลที่บันทึก' : 'Saved Batches'}
+            </div>
+            <span
+              className={`px-1.5 py-0.5 rounded text-[10px] font-bold shrink-0 ${
+                user
+                  ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                  : 'bg-sky-500/15 text-sky-600 dark:text-sky-400'
+              }`}
+            >
+              {user ? 'Cloud' : isTh ? 'ในเครื่อง' : 'Local'}
+            </span>
           </div>
           <div className="text-lg sm:text-xl font-bold text-[var(--ink)] font-mono tabular-nums whitespace-nowrap">
-            {user ? (
+            {totalBatches > 0 ? (
               <>
                 {totalBatches}{' '}
                 <span className="text-xs font-sans font-normal text-[var(--ink-soft)]">
@@ -141,15 +152,11 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </span>
               </>
             ) : (
-              <span className="text-[var(--ink-soft)]/50">—</span>
+              <span className="text-[var(--ink-soft)]/50">0</span>
             )}
           </div>
           <div className="text-xs text-[var(--ink-soft)] truncate">
-            {!user
-              ? isTh
-                ? 'ยังไม่ได้เข้าสู่ระบบ'
-                : 'Not signed in'
-              : latestBatch
+            {latestBatch
               ? latestBatch.batchName
               : isTh
               ? 'ยังไม่มีชุดข้อมูลที่บันทึก'

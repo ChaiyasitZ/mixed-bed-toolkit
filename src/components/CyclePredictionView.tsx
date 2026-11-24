@@ -313,6 +313,44 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     updateTrainWorkspace(activeTrain, { inputSilicaOut: val });
   const setInputLabel = (val: string) => updateTrainWorkspace(activeTrain, { inputLabel: val });
 
+  const [tableTab, setTableTab] = useState<'input' | 'silica' | 'cond' | 'weighted' | 'predict'>(() => {
+    try {
+      const saved = localStorage.getItem(WORKSPACE_DRAFT_KEY);
+      if (saved) {
+        const parsed: MultiTrainWorkspaceDraft = JSON.parse(saved);
+        if (
+          parsed.tableTab === 'input' ||
+          parsed.tableTab === 'silica' ||
+          parsed.tableTab === 'cond' ||
+          parsed.tableTab === 'weighted' ||
+          parsed.tableTab === 'predict'
+        ) {
+          return parsed.tableTab;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return 'input';
+  });
+  const [displayMode, setDisplayMode] = useState<'table' | 'cards'>('table');
+
+  // Default formula display hidden (false) unless previously opened in draft
+  const [showFormulaDetails, setShowFormulaDetails] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(WORKSPACE_DRAFT_KEY);
+      if (saved) {
+        const parsed: MultiTrainWorkspaceDraft = JSON.parse(saved);
+        if (typeof parsed.showFormulaDetails === 'boolean') {
+          return parsed.showFormulaDetails;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    return false;
+  });
+
   useEffect(() => {
     try {
       const draft: MultiTrainWorkspaceDraft = {
@@ -325,132 +363,90 @@ export const CyclePredictionView: React.FC<CyclePredictionViewProps> = ({
     } catch {
       // ignore
     }
-}, [activeTrain, trainWorkspaces, tableTab, showFormulaDetails]);
+  }, [activeTrain, trainWorkspaces, tableTab, showFormulaDetails]);
 
-useEffect(() => {
-  // Wait until Firebase Auth has finished restoring session before validating editingBatchId
-  if (authLoading) return;
-  (['A', 'B'] as const).forEach((tKey) => {
-    const ebId = trainWorkspaces[tKey].editingBatchId;
-    if (!ebId) return;
-    const isLocalId = ebId.startsWith('local_pred_');
-    // Clear mismatched ID immediately when switching between Cloud and Guest modes
-    if ((user && isLocalId) || (!user && !isLocalId)) {
-      updateTrainWorkspace(tKey, { editingBatchId: null, editingBatchCreatedAt: null });
-      return;
-    }
-    const matched = records.find((r) => r.id === ebId);
-    if (records.length > 0 && !matched) {
-      updateTrainWorkspace(tKey, { editingBatchId: null, editingBatchCreatedAt: null });
-    } else if (matched && matched.createdAt && trainWorkspaces[tKey].editingBatchCreatedAt !== matched.createdAt) {
-      // Keep editingBatchCreatedAt strictly synced with the authoritative record timestamp
-      updateTrainWorkspace(tKey, { editingBatchCreatedAt: matched.createdAt });
-    }
-  });
-}, [records, user?.uid]);
+  useEffect(() => {
+    // Wait until Firebase Auth has finished restoring session before validating editingBatchId
+    if (authLoading) return;
+    (['A', 'B'] as const).forEach((tKey) => {
+      const ebId = trainWorkspaces[tKey].editingBatchId;
+      if (!ebId) return;
+      const isLocalId = ebId.startsWith('local_pred_');
+      // Clear mismatched ID immediately when switching between Cloud and Guest modes
+      if ((user && isLocalId) || (!user && !isLocalId)) {
+        updateTrainWorkspace(tKey, { editingBatchId: null, editingBatchCreatedAt: null });
+        return;
+      }
+      const matched = records.find((r) => r.id === ebId);
+      if (records.length > 0 && !matched) {
+        updateTrainWorkspace(tKey, { editingBatchId: null, editingBatchCreatedAt: null });
+      } else if (matched && matched.createdAt && trainWorkspaces[tKey].editingBatchCreatedAt !== matched.createdAt) {
+        // Keep editingBatchCreatedAt strictly synced with the authoritative record timestamp
+        updateTrainWorkspace(tKey, { editingBatchCreatedAt: matched.createdAt });
+      }
+    });
   }, [records, user?.uid, authLoading]);
 
-const defaultCondCapForTrain =
-  train === 'B' ? DEFAULT_TRAIN_B_COND_CAPACITY : DEFAULT_COND_CAPACITY;
-const defaultSilicaCapForTrain =
-  train === 'B' ? DEFAULT_TRAIN_B_SILICA_CAPACITY : DEFAULT_SILICA_CAPACITY;
-const cCap = parseFloat(condCapacity) > 0 ? parseFloat(condCapacity) : defaultCondCapForTrain;
-const sCap = parseFloat(silicaCapacity) > 0 ? parseFloat(silicaCapacity) : defaultSilicaCapForTrain;
-const totalCap = Number((cCap + sCap).toFixed(3));
+  const defaultCondCapForTrain =
+    train === 'B' ? DEFAULT_TRAIN_B_COND_CAPACITY : DEFAULT_COND_CAPACITY;
+  const defaultSilicaCapForTrain =
+    train === 'B' ? DEFAULT_TRAIN_B_SILICA_CAPACITY : DEFAULT_SILICA_CAPACITY;
+  const cCap = parseFloat(condCapacity) > 0 ? parseFloat(condCapacity) : defaultCondCapForTrain;
+  const sCap = parseFloat(silicaCapacity) > 0 ? parseFloat(silicaCapacity) : defaultSilicaCapForTrain;
+  const totalCap = Number((cCap + sCap).toFixed(3));
 
-const activeBatchCalc = useMemo(() => {
-  return recalculateBatchRows(workingInputs, cCap, isTh, false, sCap);
-}, [workingInputs, cCap, sCap, isTh]);
+  const activeBatchCalc = useMemo(() => {
+    return recalculateBatchRows(workingInputs, cCap, isTh, false, sCap);
+  }, [workingInputs, cCap, sCap, isTh]);
 
-const processedCycles = activeBatchCalc.rows;
-const lastCycle = processedCycles.length > 0 ? processedCycles[processedCycles.length - 1] : null;
-const previousCycleEnd = lastCycle ? lastCycle.cycleEnd : 0;
+  const processedCycles = activeBatchCalc.rows;
+  const lastCycle = processedCycles.length > 0 ? processedCycles[processedCycles.length - 1] : null;
+  const previousCycleEnd = lastCycle ? lastCycle.cycleEnd : 0;
 
-const [inspectedStepIndex, setInspectedStepIndex] = useState<number>(0);
+  const [inspectedStepIndex, setInspectedStepIndex] = useState<number>(0);
 
-useEffect(() => {
-  if (inspectedStepIndex >= processedCycles.length && processedCycles.length > 0) {
-    setInspectedStepIndex(0);
-  }
-}, [processedCycles.length, inspectedStepIndex, activeTrain]);
-
-useEffect(() => {
-  if (externalBatchToLoad) {
-    handleLoadBatchIntoWorkspace(externalBatchToLoad);
-    if (onClearExternalBatch) onClearExternalBatch();
-  }
-}, [externalBatchToLoad]);
-
-useEffect(() => {
-  setInputLabel(isTh ? `รอบที่ ${processedCycles.length + 1}` : `Step ${processedCycles.length + 1}`);
-  const nextDefaultLabel = isTh ? `รอบที่ ${processedCycles.length + 1}` : `Step ${processedCycles.length + 1}`;
-  const trimmed = inputLabel.trim();
-  // Only auto-set the default step label if empty or if it matches an auto-generated default ("รอบที่ N" / "Step N")
-  if (!trimmed || /^(รอบที่|Step)\s+\d+$/i.test(trimmed)) {
-    if (inputLabel !== nextDefaultLabel) {
-      setInputLabel(nextDefaultLabel);
+  useEffect(() => {
+    if (inspectedStepIndex >= processedCycles.length && processedCycles.length > 0) {
+      setInspectedStepIndex(0);
     }
-  }
-}, [processedCycles.length, isTh, activeTrain]);
+  }, [processedCycles.length, inspectedStepIndex, activeTrain]);
 
-const [tableTab, setTableTab] = useState<'input' | 'silica' | 'cond' | 'weighted' | 'predict'>('input');
-const [tableTab, setTableTab] = useState<'input' | 'silica' | 'cond' | 'weighted' | 'predict'>(() => {
-  try {
-    const saved = localStorage.getItem(WORKSPACE_DRAFT_KEY);
-    if (saved) {
-      const parsed: MultiTrainWorkspaceDraft = JSON.parse(saved);
-      if (
-        parsed.tableTab === 'input' ||
-        parsed.tableTab === 'silica' ||
-        parsed.tableTab === 'cond' ||
-        parsed.tableTab === 'weighted' ||
-        parsed.tableTab === 'predict'
-      ) {
-        return parsed.tableTab;
+  useEffect(() => {
+    if (externalBatchToLoad) {
+      handleLoadBatchIntoWorkspace(externalBatchToLoad);
+      if (onClearExternalBatch) onClearExternalBatch();
+    }
+  }, [externalBatchToLoad]);
+
+  useEffect(() => {
+    const nextDefaultLabel = isTh ? `รอบที่ ${processedCycles.length + 1}` : `Step ${processedCycles.length + 1}`;
+    const trimmed = inputLabel.trim();
+    // Only auto-set the default step label if empty or if it matches an auto-generated default ("รอบที่ N" / "Step N")
+    if (!trimmed || /^(รอบที่|Step)\s+\d+$/i.test(trimmed)) {
+      if (inputLabel !== nextDefaultLabel) {
+        setInputLabel(nextDefaultLabel);
       }
     }
-  } catch {
-    // ignore
-  }
-  return 'input';
-});
-const [displayMode, setDisplayMode] = useState<'table' | 'cards'>('table');
+  }, [processedCycles.length, isTh, activeTrain]);
 
-const [editingRowState, setEditingRowState] = useState<{
-  target: 'workspace' | 'saved_batch';
-  batchRecord?: CyclePredictionRecord;
-  rowId: string;
-  label: string;
-  cycleEnd: string;
-  condIn: string;
-  condOut: string;
-  silicaIn: string;
-  silicaOut: string;
-} | null>(null);
-const [editRowError, setEditRowError] = useState<string | null>(null);
+  const [editingRowState, setEditingRowState] = useState<{
+    target: 'workspace' | 'saved_batch';
+    batchRecord?: CyclePredictionRecord;
+    rowId: string;
+    label: string;
+    cycleEnd: string;
+    condIn: string;
+    condOut: string;
+    silicaIn: string;
+    silicaOut: string;
+  } | null>(null);
+  const [editRowError, setEditRowError] = useState<string | null>(null);
 
-useEffect(() => {
-  setEditRowError(null);
-}, [editingRowState?.rowId]);
+  useEffect(() => {
+    setEditRowError(null);
+  }, [editingRowState?.rowId]);
 
-const [isBatchBrowserOpen, setIsBatchBrowserOpen] = useState(false);
-// Default formula display hidden (false) as requested
-const [showFormulaDetails, setShowFormulaDetails] = useState<boolean>(false);
-// Default formula display hidden (false) unless previously opened in draft
-const [showFormulaDetails, setShowFormulaDetails] = useState<boolean>(() => {
-  try {
-    const saved = localStorage.getItem(WORKSPACE_DRAFT_KEY);
-    if (saved) {
-      const parsed: MultiTrainWorkspaceDraft = JSON.parse(saved);
-      if (typeof parsed.showFormulaDetails === 'boolean') {
-        return parsed.showFormulaDetails;
-      }
-    }
-  } catch {
-    // ignore
-  }
-  return false;
-});
+  const [isBatchBrowserOpen, setIsBatchBrowserOpen] = useState(false);
 const [highlightedFormula, setHighlightedFormula] = useState<{
   formulaId: FormulaTargetId;
   rowIndex: number;
